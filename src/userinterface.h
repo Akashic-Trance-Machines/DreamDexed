@@ -23,16 +23,22 @@
 #include "config.h"
 #include "uimenu.h"
 #include "uibuttons.h"
+#include "mcp23017.h"
 #include <sensor/ky040.h>
 #include <display/hd44780device.h>
 #include <display/ssd1306device.h>
 #include <display/st7789device.h>
 #include <circle/gpiomanager.h>
+#include <circle/gpiopin.h>
 #include <circle/writebuffer.h>
 #include <circle/i2cmaster.h>
 #include <circle/spimaster.h>
 
 class CMiniDexed;
+
+// Global volatile flags for MCP23017 interrupt handling (set in ISR, cleared in Process)
+extern volatile bool g_bMCPInterruptA;
+extern volatile bool g_bMCPInterruptB;
 
 class CUserInterface
 {
@@ -69,6 +75,13 @@ private:
 	static void UIButtonsEventStub (CUIButton::BtnEvent Event, void *pParam);
 	void UISetMIDIButtonChannel (unsigned uCh);
 
+	// MCP23017 input processing
+	void ProcessMCPInput (void);
+	void DecodeMCPEncoder (bool bEncA, bool bEncB);
+	void ProcessMCPButtons (uint8_t nPortA, uint8_t nPortB);
+	static void MCPInterruptHandlerA (void *pParam);
+	static void MCPInterruptHandlerB (void *pParam);
+
 private:
 	CMiniDexed *m_pMiniDexed;
 	CGPIOManager *m_pGPIOManager;
@@ -89,6 +102,16 @@ private:
 
 	CKY040 *m_pRotaryEncoder;
 	bool m_bSwitchPressed;
+
+	// MCP23017 support
+	CMCP23017 *m_pMCP;
+	CGPIOPin *m_pMCPInterruptPinA;
+	CGPIOPin *m_pMCPInterruptPinB;
+	uint8_t m_nMCPPortA;			// Cached port A state
+	uint8_t m_nMCPPortB;			// Cached port B state
+	uint8_t m_nMCPLastAB;			// Last encoder A/B state (2 bits)
+	uint8_t m_nMCPLastPortA;		// Previous port A for edge detection
+	uint8_t m_nMCPLastPortB;		// Previous port B for edge detection
 
 	CUIMenu m_Menu;
 };

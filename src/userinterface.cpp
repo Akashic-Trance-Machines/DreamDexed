@@ -27,6 +27,10 @@
 
 LOGMODULE ("ui");
 
+// Global volatile flags for MCP23017 interrupt handling
+volatile bool g_bMCPInterruptA = false;
+volatile bool g_bMCPInterruptB = false;
+
 CUserInterface::CUserInterface (CMiniDexed *pMiniDexed, CGPIOManager *pGPIOManager, CI2CMaster *pI2CMaster, CSPIMaster *pSPIMaster, CConfig *pConfig)
 :	m_pMiniDexed (pMiniDexed),
 	m_pGPIOManager (pGPIOManager),
@@ -38,6 +42,14 @@ CUserInterface::CUserInterface (CMiniDexed *pMiniDexed, CGPIOManager *pGPIOManag
 	m_pUIButtons (0),
 	m_pRotaryEncoder (0),
 	m_bSwitchPressed (false),
+	m_pMCP (0),
+	m_pMCPInterruptPinA (0),
+	m_pMCPInterruptPinB (0),
+	m_nMCPPortA (0xFF),
+	m_nMCPPortB (0xFF),
+	m_nMCPLastAB (0),
+	m_nMCPLastPortA (0xFF),
+	m_nMCPLastPortB (0xFF),
 	m_Menu (this, pMiniDexed, pConfig)
 {
 }
@@ -48,6 +60,9 @@ CUserInterface::~CUserInterface (void)
 	delete m_pUIButtons;
 	delete m_pLCDBuffered;
 	delete m_pLCD;
+	delete m_pMCPInterruptPinB;
+	delete m_pMCPInterruptPinA;
+	delete m_pMCP;
 }
 
 bool CUserInterface::Initialize (void)
@@ -200,6 +215,53 @@ bool CUserInterface::Initialize (void)
 		LOGDBG ("Rotary encoder initialized");
 	}
 
+	// MCP23017 I/O Expander initialization
+	if (m_pConfig->GetMCPEnabled ())
+	{
+		m_pMCP = new CMCP23017 (*m_pI2CMaster, m_pConfig->GetMCPAddress ());
+		assert (m_pMCP);
+
+		// Initialize Port A and B for UI inputs (all 8 bits each)
+		if (!m_pMCP->Init_UI_PortA (0xFF))
+		{
+			LOGERR ("MCP23017 Port A initialization failed");
+			return false;
+		}
+		if (!m_pMCP->Init_UI_PortB (0xFF))
+		{
+			LOGERR ("MCP23017 Port B initialization failed");
+			return false;
+		}
+
+		// Setup GPIO interrupt pin for Port A
+		unsigned nIntPinA = m_pConfig->GetMCPAInterruptGPIO ();
+		if (nIntPinA > 0)
+		{
+			m_pMCPInterruptPinA = new CGPIOPin (nIntPinA, GPIOModeInputPullUp, m_pGPIOManager);
+			m_pMCPInterruptPinA->ConnectInterrupt (MCPInterruptHandlerA, this);
+			m_pMCPInterruptPinA->EnableInterrupt (GPIOInterruptOnFallingEdge);
+			LOGDBG ("MCP23017 INTA on GPIO%u", nIntPinA);
+		}
+
+		// Setup GPIO interrupt pin for Port B
+		unsigned nIntPinB = m_pConfig->GetMCPBInterruptGPIO ();
+		if (nIntPinB > 0)
+		{
+			m_pMCPInterruptPinB = new CGPIOPin (nIntPinB, GPIOModeInputPullUp, m_pGPIOManager);
+			m_pMCPInterruptPinB->ConnectInterrupt (MCPInterruptHandlerB, this);
+			m_pMCPInterruptPinB->EnableInterrupt (GPIOInterruptOnFallingEdge);
+			LOGDBG ("MCP23017 INTB on GPIO%u", nIntPinB);
+		}
+
+		// Read initial port states
+		m_nMCPPortA = m_pMCP->ReadGpioA ();
+		m_nMCPPortB = m_pMCP->ReadGpioB ();
+		m_nMCPLastPortA = m_nMCPPortA;
+		m_nMCPLastPortB = m_nMCPPortB;
+
+		LOGDBG ("MCP23017 initialized at I2C address 0x%02X", m_pConfig->GetMCPAddress ());
+	}
+
 	m_Menu.EventHandler (CUIMenu::MenuEventUpdate);
 
 	return true;
@@ -222,6 +284,13 @@ void CUserInterface::Process (void)
 	{
 		m_pLCDBuffered->Update ();
 	}
+
+	// Process MCP23017 interrupts if enabled
+	if (m_pMCP)
+	{
+		ProcessMCPInput ();
+	}
+
 	if (m_pUIButtons)
 	{
 		m_pUIButtons->Update();
@@ -467,5 +536,218 @@ void CUserInterface::UISetMIDIButtonChannel (unsigned uCh)
 	{
 		m_nMIDIButtonCh = CMIDIDevice::OmniMode;
 		LOGNOTE("MIDI Button channel set to: OMNI");
+	}
+}
+
+// MCP23017 interrupt handler for Port A (INTA)
+void CUserInterface::MCPInterruptHandlerA (void *pParam)
+{
+	g_bMCPInterruptA = true;
+}
+
+// MCP23017 interrupt handler for Port B (INTB)
+void CUserInterface::MCPInterruptHandlerB (void *pParam)
+{
+	g_bMCPInterruptB = true;
+}
+
+// Process MCP23017 input changes (called from Process())
+void CUserInterface::ProcessMCPInput (void)
+{
+	bool bReadA = g_bMCPInterruptA;
+	bool bReadB = g_bMCPInterruptB;
+
+	if (bReadA)
+	{
+		g_bMCPInterruptA = false;
+		m_nMCPPortA = m_pMCP->ReadIntcapA ();
+	}
+
+	if (bReadB)
+	{
+		g_bMCPInterruptB = false;
+		m_nMCPPortB = m_pMCP->ReadIntcapB ();
+	}
+
+	if (bReadA || bReadB)
+	{
+		// Get encoder pin states from configured pins
+		unsigned nClockPin = m_pConfig->GetEncoderPinClock ();
+		unsigned nDataPin = m_pConfig->GetEncoderPinData ();
+		
+		bool bEncA = false;
+		bool bEncB = false;
+		
+		// Read encoder Clock pin
+		if (IsMCPPin (nClockPin))
+		{
+			uint8_t nBit = 1 << MCPPinToBit (nClockPin);
+			bEncA = ((IsMCPPortA (nClockPin) ? m_nMCPPortA : m_nMCPPortB) & nBit) != 0;
+		}
+		
+		// Read encoder Data pin
+		if (IsMCPPin (nDataPin))
+		{
+			uint8_t nBit = 1 << MCPPinToBit (nDataPin);
+			bEncB = ((IsMCPPortA (nDataPin) ? m_nMCPPortA : m_nMCPPortB) & nBit) != 0;
+		}
+		
+		DecodeMCPEncoder (bEncA, bEncB);
+
+		// Process button edge detection
+		ProcessMCPButtons (m_nMCPPortA, m_nMCPPortB);
+
+		// Update last states
+		m_nMCPLastPortA = m_nMCPPortA;
+		m_nMCPLastPortB = m_nMCPPortB;
+	}
+}
+
+// Decode MCP23017 encoder using Gray code state machine
+void CUserInterface::DecodeMCPEncoder (bool bEncA, bool bEncB)
+{
+	// Gray code transition table for rotary encoder
+	// Index = (lastAB << 2) | currentAB
+	// Values: 0 = no change, 1 = CW step, -1 = CCW step, 2 = invalid
+	static const int8_t s_EncoderTable[16] = {
+		 0,  // 00 -> 00: no change
+		-1,  // 00 -> 01: CCW
+		 1,  // 00 -> 10: CW
+		 2,  // 00 -> 11: invalid (skip)
+		 1,  // 01 -> 00: CW
+		 0,  // 01 -> 01: no change
+		 2,  // 01 -> 10: invalid (skip)
+		-1,  // 01 -> 11: CCW
+		-1,  // 10 -> 00: CCW
+		 2,  // 10 -> 01: invalid (skip)
+		 0,  // 10 -> 10: no change
+		 1,  // 10 -> 11: CW
+		 2,  // 11 -> 00: invalid (skip)
+		 1,  // 11 -> 01: CW
+		-1,  // 11 -> 10: CCW
+		 0   // 11 -> 11: no change
+	};
+
+	uint8_t nCurrentAB = (bEncA ? 1 : 0) | (bEncB ? 2 : 0);
+	uint8_t nIndex = (m_nMCPLastAB << 2) | nCurrentAB;
+	int8_t nDelta = s_EncoderTable[nIndex];
+
+	m_nMCPLastAB = nCurrentAB;
+
+	if (nDelta == 1)
+	{
+		// Clockwise step - fire StepUp event
+		if (m_bSwitchPressed)
+		{
+			m_Menu.EventHandler (CUIMenu::MenuEventPressAndStepUp);
+		}
+		else
+		{
+			m_Menu.EventHandler (CUIMenu::MenuEventStepUp);
+		}
+	}
+	else if (nDelta == -1)
+	{
+		// Counter-clockwise step - fire StepDown event
+		if (m_bSwitchPressed)
+		{
+			m_Menu.EventHandler (CUIMenu::MenuEventPressAndStepDown);
+		}
+		else
+		{
+			m_Menu.EventHandler (CUIMenu::MenuEventStepDown);
+		}
+	}
+	// nDelta == 0 or 2: no action (no change or invalid transition)
+}
+
+// Helper: Get MCP pin state for a given pin code
+static bool GetMCPPinState (unsigned nPin, uint8_t nPortA, uint8_t nPortB, uint8_t nLastPortA, uint8_t nLastPortB, bool bCurrent)
+{
+	if (!IsMCPPin (nPin))
+	{
+		return false;  // Not an MCP pin
+	}
+	
+	uint8_t nBit = 1 << MCPPinToBit (nPin);
+	uint8_t nPort = IsMCPPortA (nPin) ? (bCurrent ? nPortA : nLastPortA) : (bCurrent ? nPortB : nLastPortB);
+	
+	// Active low: return true if pressed (bit is 0)
+	return (nPort & nBit) == 0;
+}
+
+// Process MCP23017 button edge detection
+void CUserInterface::ProcessMCPButtons (uint8_t nPortA, uint8_t nPortB)
+{
+	// Detect falling edges (button press, active low) using configured pins
+	
+	// Select button (also encoder switch)
+	unsigned nSelectPin = m_pConfig->GetButtonPinSelect ();
+	if (IsMCPPin (nSelectPin))
+	{
+		bool bNow = GetMCPPinState (nSelectPin, nPortA, nPortB, m_nMCPLastPortA, m_nMCPLastPortB, true);
+		bool bWas = GetMCPPinState (nSelectPin, nPortA, nPortB, m_nMCPLastPortA, m_nMCPLastPortB, false);
+		
+		if (bNow && !bWas)
+		{
+			m_bSwitchPressed = true;
+		}
+		else if (!bNow && bWas)
+		{
+			m_bSwitchPressed = false;
+			m_Menu.EventHandler (CUIMenu::MenuEventSelect);
+		}
+	}
+	
+	// Home button
+	unsigned nHomePin = m_pConfig->GetButtonPinHome ();
+	if (IsMCPPin (nHomePin) && nHomePin != nSelectPin)  // Avoid duplicate if same pin
+	{
+		bool bNow = GetMCPPinState (nHomePin, nPortA, nPortB, m_nMCPLastPortA, m_nMCPLastPortB, true);
+		bool bWas = GetMCPPinState (nHomePin, nPortA, nPortB, m_nMCPLastPortA, m_nMCPLastPortB, false);
+		
+		if (bNow && !bWas)
+		{
+			m_Menu.EventHandler (CUIMenu::MenuEventHome);
+		}
+	}
+	
+	// Back button
+	unsigned nBackPin = m_pConfig->GetButtonPinBack ();
+	if (IsMCPPin (nBackPin) && nBackPin != nSelectPin)
+	{
+		bool bNow = GetMCPPinState (nBackPin, nPortA, nPortB, m_nMCPLastPortA, m_nMCPLastPortB, true);
+		bool bWas = GetMCPPinState (nBackPin, nPortA, nPortB, m_nMCPLastPortA, m_nMCPLastPortB, false);
+		
+		if (bNow && !bWas)
+		{
+			m_Menu.EventHandler (CUIMenu::MenuEventBack);
+		}
+	}
+	
+	// Prev button
+	unsigned nPrevPin = m_pConfig->GetButtonPinPrev ();
+	if (IsMCPPin (nPrevPin))
+	{
+		bool bNow = GetMCPPinState (nPrevPin, nPortA, nPortB, m_nMCPLastPortA, m_nMCPLastPortB, true);
+		bool bWas = GetMCPPinState (nPrevPin, nPortA, nPortB, m_nMCPLastPortA, m_nMCPLastPortB, false);
+		
+		if (bNow && !bWas)
+		{
+			m_Menu.EventHandler (CUIMenu::MenuEventStepDown);
+		}
+	}
+	
+	// Next button
+	unsigned nNextPin = m_pConfig->GetButtonPinNext ();
+	if (IsMCPPin (nNextPin))
+	{
+		bool bNow = GetMCPPinState (nNextPin, nPortA, nPortB, m_nMCPLastPortA, m_nMCPLastPortB, true);
+		bool bWas = GetMCPPinState (nNextPin, nPortA, nPortB, m_nMCPLastPortA, m_nMCPLastPortB, false);
+		
+		if (bNow && !bWas)
+		{
+			m_Menu.EventHandler (CUIMenu::MenuEventStepUp);
+		}
 	}
 }

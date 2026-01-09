@@ -33,6 +33,22 @@
 #define SPI_DEF_CLOCK	15000	// kHz
 #define SPI_DEF_MODE	0		// Default mode (0,1,2,3)
 
+// MCP23017 Pin Codes
+// Pin numbering: 0 = disabled, 1-27 = GPIO, 100-107 = MCP Port A (A0-A7), 110-117 = MCP Port B (B0-B7)
+#define MCP_PIN_DISABLED	0
+#define MCP_PIN_A_BASE		100		// A0 = 100, A1 = 101, ..., A7 = 107
+#define MCP_PIN_B_BASE		110		// B0 = 110, B1 = 111, ..., B7 = 117
+
+// Helper to check if a pin code refers to an MCP pin
+inline bool IsMCPPin(unsigned pin) { return pin >= MCP_PIN_A_BASE && pin <= (MCP_PIN_B_BASE + 7); }
+inline bool IsMCPPortA(unsigned pin) { return pin >= MCP_PIN_A_BASE && pin <= (MCP_PIN_A_BASE + 7); }
+inline bool IsMCPPortB(unsigned pin) { return pin >= MCP_PIN_B_BASE && pin <= (MCP_PIN_B_BASE + 7); }
+inline unsigned MCPPinToBit(unsigned pin) { return IsMCPPortA(pin) ? (pin - MCP_PIN_A_BASE) : (pin - MCP_PIN_B_BASE); }
+
+// Parse a pin string like "11", "A2", or "B5" into a pin code
+unsigned ParsePinString(const char *pStr, unsigned nDefault = 0);
+
+
 class CConfig		// Configuration for MiniDexed
 {
 public:
@@ -257,6 +273,13 @@ public:
 	unsigned GetEncoderPinClock (void) const;
 	unsigned GetEncoderPinData (void) const;
 
+	// MCP23017 I/O Expander (for UI inputs)
+	const char *GetUIInputDevice (void) const;	// "gpio" or "mcp23017"
+	bool GetMCPEnabled (void) const;			// true if UIInputDevice == "mcp23017"
+	unsigned GetMCPAddress (void) const;		// I2C address (default 0x21)
+	unsigned GetMCPAInterruptGPIO (void) const;	// GPIO for INTA (default 16)
+	unsigned GetMCPBInterruptGPIO (void) const;	// GPIO for INTB (default 26)
+
 	// Debug
 	bool GetMIDIDumpEnabled (void) const;
 	bool GetProfileEnabled (void) const;
@@ -405,6 +428,12 @@ private:
 	bool m_bEncoderEnabled;
 	unsigned m_nEncoderPinClock;
 	unsigned m_nEncoderPinData;
+
+	// MCP23017 I/O Expander
+	std::string m_UIInputDevice;
+	unsigned m_nMCPAddress;
+	unsigned m_nMCPAInterruptGPIO;
+	unsigned m_nMCPBInterruptGPIO;
 
 	bool m_bMIDIDumpEnabled;
 	bool m_bProfileEnabled;

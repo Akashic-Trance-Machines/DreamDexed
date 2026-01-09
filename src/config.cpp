@@ -22,6 +22,38 @@
 //
 #include "config.h"
 #include "../Synth_Dexed/src/dexed.h"
+#include <cstring>
+#include <cstdlib>
+
+// Parse a pin string like "11", "A2", or "B5" into a pin code
+// Returns: 0 = disabled, 1-27 = GPIO, 100-107 = MCP Port A, 110-117 = MCP Port B
+unsigned ParsePinString(const char *pStr, unsigned nDefault)
+{
+	if (pStr == nullptr || pStr[0] == '\0')
+	{
+		return nDefault;
+	}
+
+	// Check for MCP pin format: A0-A7 or B0-B7
+	if ((pStr[0] == 'A' || pStr[0] == 'a') && pStr[1] >= '0' && pStr[1] <= '7' && pStr[2] == '\0')
+	{
+		return MCP_PIN_A_BASE + (pStr[1] - '0');
+	}
+	if ((pStr[0] == 'B' || pStr[0] == 'b') && pStr[1] >= '0' && pStr[1] <= '7' && pStr[2] == '\0')
+	{
+		return MCP_PIN_B_BASE + (pStr[1] - '0');
+	}
+
+	// Otherwise parse as numeric GPIO pin
+	char *pEnd;
+	unsigned long nValue = strtoul(pStr, &pEnd, 10);
+	if (pEnd != pStr && *pEnd == '\0')
+	{
+		return static_cast<unsigned>(nValue);
+	}
+
+	return nDefault;
+}
 
 CConfig::CConfig (FATFS *pFileSystem)
 :	m_Properties ("minidexed.ini", pFileSystem)
@@ -147,12 +179,12 @@ void CConfig::Load (void)
 	m_nLCDColumns = std::max(MinLCDColumns, m_Properties.GetNumber ("LCDColumns", 16));
 	m_nLCDRows = std::max(MinLCDRows, m_Properties.GetNumber ("LCDRows", 2));
 
-	m_nButtonPinPrev = m_Properties.GetNumber ("ButtonPinPrev", 0);
-	m_nButtonPinNext = m_Properties.GetNumber ("ButtonPinNext", 0);
-	m_nButtonPinBack = m_Properties.GetNumber ("ButtonPinBack", 11);
-	m_nButtonPinSelect = m_Properties.GetNumber ("ButtonPinSelect", 11);
-	m_nButtonPinHome = m_Properties.GetNumber ("ButtonPinHome", 11);
-	m_nButtonPinShortcut = m_Properties.GetNumber ("ButtonPinShortcut", 11);
+	m_nButtonPinPrev = ParsePinString (m_Properties.GetString ("ButtonPinPrev", "0"), 0);
+	m_nButtonPinNext = ParsePinString (m_Properties.GetString ("ButtonPinNext", "0"), 0);
+	m_nButtonPinBack = ParsePinString (m_Properties.GetString ("ButtonPinBack", "11"), 11);
+	m_nButtonPinSelect = ParsePinString (m_Properties.GetString ("ButtonPinSelect", "11"), 11);
+	m_nButtonPinHome = ParsePinString (m_Properties.GetString ("ButtonPinHome", "11"), 11);
+	m_nButtonPinShortcut = ParsePinString (m_Properties.GetString ("ButtonPinShortcut", "11"), 11);
 
 	m_ButtonActionPrev = m_Properties.GetString ("ButtonActionPrev", "");
 	m_ButtonActionNext = m_Properties.GetString ("ButtonActionNext", "");
@@ -164,12 +196,12 @@ void CConfig::Load (void)
 	m_nLongPressTimeout = m_Properties.GetNumber ("LongPressTimeout", 600);
 	m_nMIDIRelativeDebounceTime = m_Properties.GetNumber ("MIDIRelativeDebounceTime", 0);
 
-	m_nButtonPinPgmUp = m_Properties.GetNumber ("ButtonPinPgmUp", 0);
-	m_nButtonPinPgmDown = m_Properties.GetNumber ("ButtonPinPgmDown", 0);
-	m_nButtonPinBankUp = m_Properties.GetNumber ("ButtonPinBankUp", 0);
-	m_nButtonPinBankDown = m_Properties.GetNumber ("ButtonPinBankDown", 0);
-	m_nButtonPinTGUp = m_Properties.GetNumber ("ButtonPinTGUp", 0);
-	m_nButtonPinTGDown = m_Properties.GetNumber ("ButtonPinTGDown", 0);
+	m_nButtonPinPgmUp = ParsePinString (m_Properties.GetString ("ButtonPinPgmUp", "0"), 0);
+	m_nButtonPinPgmDown = ParsePinString (m_Properties.GetString ("ButtonPinPgmDown", "0"), 0);
+	m_nButtonPinBankUp = ParsePinString (m_Properties.GetString ("ButtonPinBankUp", "0"), 0);
+	m_nButtonPinBankDown = ParsePinString (m_Properties.GetString ("ButtonPinBankDown", "0"), 0);
+	m_nButtonPinTGUp = ParsePinString (m_Properties.GetString ("ButtonPinTGUp", "0"), 0);
+	m_nButtonPinTGDown = ParsePinString (m_Properties.GetString ("ButtonPinTGDown", "0"), 0);
 
 	m_ButtonActionPgmUp = m_Properties.GetString ("ButtonActionPgmUp", "");
 	m_ButtonActionPgmDown = m_Properties.GetString ("ButtonActionPgmDown", "");
@@ -208,8 +240,14 @@ void CConfig::Load (void)
 	m_MIDIButtonActionTGDown = m_Properties.GetString ("MIDIButtonActionTGDown", "");
 	
 	m_bEncoderEnabled = m_Properties.GetNumber ("EncoderEnabled", 0) != 0;
-	m_nEncoderPinClock = m_Properties.GetNumber ("EncoderPinClock", 10);
-	m_nEncoderPinData = m_Properties.GetNumber ("EncoderPinData", 9);
+	m_nEncoderPinClock = ParsePinString (m_Properties.GetString ("EncoderPinClock", "10"), 10);
+	m_nEncoderPinData = ParsePinString (m_Properties.GetString ("EncoderPinData", "9"), 9);
+
+	// MCP23017 I/O Expander configuration
+	m_UIInputDevice = m_Properties.GetString ("UIInputDevice", "gpio");
+	m_nMCPAddress = m_Properties.GetNumber ("MCPAddress", 0x21);
+	m_nMCPAInterruptGPIO = m_Properties.GetNumber ("MCPAInterruptGPIO", 16);
+	m_nMCPBInterruptGPIO = m_Properties.GetNumber ("MCPBInterruptGPIO", 26);
 
 	m_bMIDIDumpEnabled  = m_Properties.GetNumber ("MIDIDumpEnabled", 0) != 0;
 	m_bProfileEnabled = m_Properties.GetNumber ("ProfileEnabled", 0) != 0;
@@ -796,6 +834,32 @@ unsigned CConfig::GetEncoderPinClock (void) const
 unsigned CConfig::GetEncoderPinData (void) const
 {
 	return m_nEncoderPinData;
+}
+
+// MCP23017 I/O Expander
+const char *CConfig::GetUIInputDevice (void) const
+{
+	return m_UIInputDevice.c_str();
+}
+
+bool CConfig::GetMCPEnabled (void) const
+{
+	return m_UIInputDevice == "mcp23017";
+}
+
+unsigned CConfig::GetMCPAddress (void) const
+{
+	return m_nMCPAddress;
+}
+
+unsigned CConfig::GetMCPAInterruptGPIO (void) const
+{
+	return m_nMCPAInterruptGPIO;
+}
+
+unsigned CConfig::GetMCPBInterruptGPIO (void) const
+{
+	return m_nMCPBInterruptGPIO;
 }
 
 bool CConfig::GetMIDIDumpEnabled (void) const
