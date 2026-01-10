@@ -18,6 +18,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 //
 #include "uibuttons.h"
+#include "config.h"
 #include <circle/logger.h>
 #include <cassert>
 #include <circle/timer.h>
@@ -83,6 +84,10 @@ boolean CUIButton::Initialize (unsigned pinNumber, unsigned doubleClickTimeout, 
 		{
 			LOGDBG("MIDI Button on msg: %d (%x)", MidiPinToCC(m_pinNumber), MidiPinToCC(m_pinNumber));
 			m_midipin = new CMIDIPin (m_pinNumber);
+		} else if (IsMCPPin(m_pinNumber)) {
+			// MCP pins are handled in userinterface.cpp, not by CGPIOPin
+			LOGDBG("MCP Button on pin: %d (Port %c, Bit %d)", m_pinNumber, 
+			       IsMCPPortA(m_pinNumber) ? 'A' : 'B', MCPPinToBit(m_pinNumber));
 		} else {
 			LOGDBG("GPIO Button on pin: %d (%x)", m_pinNumber, m_pinNumber);
 			m_pin = new CGPIOPin (m_pinNumber, GPIOModeInputPullUp);
