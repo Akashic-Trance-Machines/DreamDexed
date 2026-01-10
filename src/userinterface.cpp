@@ -197,10 +197,15 @@ bool CUserInterface::Initialize (void)
 
 	LOGDBG ("Button User Interface initialized");
 
-	if (m_pConfig->GetEncoderEnabled ())
+	// Only create CKY040 encoder if using GPIO pins (not MCP pins)
+	// When using MCP pins, encoder is handled by ProcessMCPInput()
+	unsigned nEncoderClock = m_pConfig->GetEncoderPinClock ();
+	unsigned nEncoderData = m_pConfig->GetEncoderPinData ();
+	
+	if (m_pConfig->GetEncoderEnabled () && !IsMCPPin (nEncoderClock) && !IsMCPPin (nEncoderData))
 	{
-		m_pRotaryEncoder = new CKY040 (m_pConfig->GetEncoderPinClock (),
-					       m_pConfig->GetEncoderPinData (),
+		m_pRotaryEncoder = new CKY040 (nEncoderClock,
+					       nEncoderData,
 					       m_pConfig->GetButtonPinShortcut (),
 					       m_pGPIOManager);
 		assert (m_pRotaryEncoder);
@@ -213,6 +218,10 @@ bool CUserInterface::Initialize (void)
 		m_pRotaryEncoder->RegisterEventHandler (EncoderEventStub, this);
 
 		LOGDBG ("Rotary encoder initialized");
+	}
+	else if (m_pConfig->GetEncoderEnabled () && (IsMCPPin (nEncoderClock) || IsMCPPin (nEncoderData)))
+	{
+		LOGDBG ("Rotary encoder on MCP pins - handled by MCP interrupt");
 	}
 
 	// MCP23017 I/O Expander initialization
