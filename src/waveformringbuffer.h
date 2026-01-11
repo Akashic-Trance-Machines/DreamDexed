@@ -10,13 +10,13 @@
 class CWaveformRingBuffer
 {
 public:
-	static constexpr unsigned BUFFER_SIZE = 256;     // Power of 2 for fast modulo
+	static constexpr unsigned WAVEFORM_BUFFER_SIZE = 256;     // Power of 2 for fast modulo
 	static constexpr unsigned WAVEFORM_WIDTH = 128;  // Display width in pixels
 
 	CWaveformRingBuffer ()
 		: m_nWriteIndex (0)
 	{
-		for (unsigned i = 0; i < BUFFER_SIZE; i++)
+		for (unsigned i = 0; i < WAVEFORM_BUFFER_SIZE; i++)
 		{
 			m_Buffer[i] = 0;
 		}
@@ -25,7 +25,7 @@ public:
 	// Called by audio thread - writes one sample
 	void WriteSample (int8_t sample)
 	{
-		m_Buffer[m_nWriteIndex & (BUFFER_SIZE - 1)] = sample;
+		m_Buffer[m_nWriteIndex & (WAVEFORM_BUFFER_SIZE - 1)] = sample;
 		m_nWriteIndex++;
 	}
 
@@ -38,12 +38,12 @@ public:
 		
 		for (unsigned i = 0; i < WAVEFORM_WIDTH; i++)
 		{
-			pBuffer[i] = m_Buffer[(nStart + i) & (BUFFER_SIZE - 1)];
+			pBuffer[i] = m_Buffer[(nStart + i) & (WAVEFORM_BUFFER_SIZE - 1)];
 		}
 	}
 
 private:
-	volatile int8_t m_Buffer[BUFFER_SIZE];
+	volatile int8_t m_Buffer[WAVEFORM_BUFFER_SIZE];
 	volatile unsigned m_nWriteIndex;
 };
 

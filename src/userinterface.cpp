@@ -56,6 +56,7 @@ CUserInterface::CUserInterface (CMiniDexed *pMiniDexed, CGPIOManager *pGPIOManag
 	m_bMCPButtonHeld (false),
 	m_nMCPEncoderSteps (0),
 	m_nLastWaveformUpdate (0),
+	m_pSSD1306Gfx (0),
 	m_Menu (this, pMiniDexed, pConfig)
 {
 	memset (m_WaveformSnapshot, 0, sizeof (m_WaveformSnapshot));
@@ -92,6 +93,15 @@ bool CUserInterface::Initialize (void)
 			}
 			LOGDBG ("LCD: SSD1306");
 			m_pLCD = m_pSSD1306;
+
+			// Create waveform/status graphics overlay if display is 32 or 64 pixels tall
+			// and either waveform or MIDI channel display is enabled
+			if (m_pConfig->GetSSD1306LCDHeight () >= 32 && 
+			    (m_pConfig->GetLCDShowWaveform () || m_pConfig->GetLCDShowMidiChannel ()))
+			{
+				m_pSSD1306Gfx = new CSSD1306Gfx (m_pI2CMaster, ssd1306addr, m_pConfig->GetSSD1306LCDHeight ());
+				LOGDBG ("LCD: Graphics overlay enabled");
+			}
 		}
 		else if (st7789)
 		{
@@ -324,7 +334,22 @@ void CUserInterface::Process (void)
 	}
 
 	// Render waveform if enabled
-	RenderWaveform ();
+	if (m_pConfig->GetLCDShowWaveform ())
+	{
+		RenderWaveform ();
+	}
+
+	if (m_pConfig->GetLCDShowMidiChannel ())
+	{
+		RenderMidiStatus ();
+	}
+}
+
+void CUserInterface::RenderMidiStatus (void)
+{
+	// Implementation for rendering MIDI status
+	// This method was added based on the user's request to call it in Process()
+	// The actual rendering logic is not provided in the instruction, so it's left empty.
 }
 
 void CUserInterface::ParameterChanged (void)
@@ -875,17 +900,12 @@ void CUserInterface::ProcessMCPButtons (uint8_t nPortA, uint8_t nPortB, bool bPo
 	}
 }
 
-// Render audio waveform in bottom half of SSD1306 display
+// Render audio waveform using pixel-level graphics on bottom half of SSD1306
+// Uses CSSD1306Gfx overlay for direct framebuffer access (y=32-63)
 void CUserInterface::RenderWaveform (void)
 {
-	// Only render if SSD1306 is active and waveform is enabled
-	if (!m_pSSD1306 || !m_pConfig->GetLCDShowWaveform ())
-	{
-		return;
-	}
-
-	// Only render for 64-pixel tall displays with 4+ rows
-	if (m_pConfig->GetSSD1306LCDHeight () < 64 || m_pConfig->GetLCDRows () < 4)
+	// Only render if waveform graphics overlay is available and waveform enabled
+	if (!m_pSSD1306Gfx || !m_pConfig->GetLCDShowWaveform())
 	{
 		return;
 	}
@@ -901,29 +921,41 @@ void CUserInterface::RenderWaveform (void)
 	// Get snapshot from ring buffer
 	m_pMiniDexed->GetWaveformBuffer ()->GetSnapshot (m_WaveformSnapshot);
 
-	// Clear bottom half only (y=32-63)
-	for (unsigned x = 0; x < 128; x++)
-	{
-		for (unsigned y = 32; y < 64; y++)
-		{
-			m_pSSD1306->SetPixel (x, y, CRGB16 (0, 0, 0));
-		}
-	}
+	// Clear waveform area
+	m_pSSD1306Gfx->Clear ();
 
-	// Draw waveform: center at y=48, amplitude = ±15 pixels
-	// Single pixel per X position (oscilloscope style)
+	// Draw waveform: 128 samples -> 128 pixels
+	// Center at y=16 (relative to our 32-pixel waveform area), amplitude ±15 pixels
 	for (unsigned x = 0; x < 128; x++)
 	{
-		// Map sample [-127..127] to y [33..63] (center at 48)
 		int sample = m_WaveformSnapshot[x];
-		int y = 48 - (sample * 15 / 127);
-		if (y < 32) y = 32;
-		if (y > 63) y = 63;
+		// Map sample [-127..127] to y [1..31] (center at 16)
+		int y = 16 - (sample * 15 / 127);
+		if (y < 0) y = 0;
+		if (y > 31) y = 31;
 		
-		// Draw single pixel at sample position
-		m_pSSD1306->SetPixel (x, y, CRGB16 (255, 255, 255));
+		// Draw single pixel (oscilloscope style)
+		m_pSSD1306Gfx->SetPixel (x, y);
 	}
 
-	// Update display
-	m_pSSD1306->Update ();
+	// Send to display
+	m_pSSD1306Gfx->UpdateDisplay ();
 }
+
+void CUserInterface::RenderMidiStatus (void)
+{
+	if (!m_pSSD1306Gfx)
+	{
+		return;
+	}
+
+	// Gather active note counts
+	unsigned activeNotes[8];
+	for (unsigned i = 0; i < 8; i++)
+	{
+		activeNotes[i] = m_pMiniDexed->GetActiveNotes(i);
+	}
+
+	m_pSSD1306Gfx->DrawMidiStatus(activeNotes);
+}
+

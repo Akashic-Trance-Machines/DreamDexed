@@ -150,6 +150,14 @@ void CConfig::Load (void)
 	m_nLCDPinEnable = m_Properties.GetNumber ("LCDPinEnable", 4);
 	m_nLCDPinRegisterSelect = m_Properties.GetNumber ("LCDPinRegisterSelect", 27);
 	m_nLCDPinReadWrite = m_Properties.GetNumber ("LCDPinReadWrite", 0);
+	const char *pLCDShowWaveform = m_Properties.GetProperty ("LCDShowWaveform");
+	m_bLCDShowWaveform = pLCDShowWaveform != 0 && atoi (pLCDShowWaveform) != 0;
+
+	const char *pLCDShowMidiChannel = m_Properties.GetProperty ("LCDShowMidiChannel");
+	m_bLCDShowMidiChannel = pLCDShowMidiChannel != 0 && atoi (pLCDShowMidiChannel) != 0;
+
+	const char *pLCDPinSDA = m_Properties.GetProperty ("LCDPinSDA");
+	m_nLCDPinSDA = pLCDPinSDA != 0 ? atoi (pLCDPinSDA) : 2;
 	m_nLCDPinData4 = m_Properties.GetNumber ("LCDPinData4", 22);
 	m_nLCDPinData5 = m_Properties.GetNumber ("LCDPinData5", 23);
 	m_nLCDPinData6 = m_Properties.GetNumber ("LCDPinData6", 24);

@@ -24,6 +24,7 @@
 #include "uimenu.h"
 #include "uibuttons.h"
 #include "mcp23017.h"
+#include "ssd1306gfx.h"
 #include <sensor/ky040.h>
 #include <display/hd44780device.h>
 #include <display/ssd1306device.h>
@@ -95,6 +96,7 @@ private:
 	CCharDevice    *m_pLCD;
 	CHD44780Device *m_pHD44780;
 	CSSD1306Device *m_pSSD1306;
+	CSSD1306Gfx    *m_pSSD1306Gfx;  // Graphics overlay for waveform
 	CST7789Display *m_pST7789Display;
 	CST7789Device  *m_pST7789;
 	CWriteBufferDevice *m_pLCDBuffered;

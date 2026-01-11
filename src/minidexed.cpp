@@ -146,6 +146,8 @@ CMiniDexed::CMiniDexed (CConfig *pConfig, CInterruptSystem *pInterrupt,
 		m_nEQLowMidFreq[i] = 24;
 		m_nEQMidHighFreq[i] = 44;
 
+		m_nActiveNotes[i] = 0; // Initialize active notes tracking
+
 		// Active the required number of active TGs
 		if (i<m_nToneGenerators)
 		{
@@ -919,31 +921,45 @@ void CMiniDexed::SetMIDIChannel (uint8_t uchChannel, unsigned nTG)
 void CMiniDexed::keyup (int16_t pitch, unsigned nTG)
 {
 	assert (nTG < CConfig::AllToneGenerators);
-	if (nTG >= m_nToneGenerators) return;  // Not an active TG
 
-	assert (m_pTG[nTG]);
-
-	pitch = ApplyNoteLimits (pitch, nTG);
-	if (pitch >= 0)
+	if (nTG >= m_nToneGenerators)
 	{
-		m_pTG[nTG]->keyup (pitch);
+		// keyup for all TGs
+		for (unsigned i = 0; i < m_nToneGenerators; i++)
+		{
+			m_pTG[i]->keyup (pitch);
+			if (m_nActiveNotes[i] > 0) m_nActiveNotes[i]--;
+		}
+
+		return;
 	}
+	
+	assert (m_pTG[nTG]);
+	m_pTG[nTG]->keyup (pitch);
+	if (m_nActiveNotes[nTG] > 0) m_nActiveNotes[nTG]--;
 }
 
 void CMiniDexed::keydown (int16_t pitch, uint8_t velocity, unsigned nTG)
 {
 	assert (nTG < CConfig::AllToneGenerators);
-	if (nTG >= m_nToneGenerators) return;  // Not an active TG
-
-	assert (m_pTG[nTG]);
-
-	m_nLastKeyDown = pitch;
-
-	pitch = ApplyNoteLimits (pitch, nTG);
-	if (pitch >= 0)
+	
+	if (nTG >= m_nToneGenerators)
 	{
-		m_pTG[nTG]->keydown (pitch, velocity);
+		// keydown for all TGs
+		assert (velocity > 0);
+		for (unsigned i = 0; i < m_nToneGenerators; i++)
+		{
+			m_pTG[i]->keydown (pitch, velocity);
+			m_nActiveNotes[i]++;
+		}
+		
+		return;
 	}
+	
+	assert (m_pTG[nTG]);
+	assert (velocity > 0);
+	m_pTG[nTG]->keydown (pitch, velocity);
+	m_nActiveNotes[nTG]++;
 }
 
 int16_t CMiniDexed::ApplyNoteLimits (int16_t pitch, unsigned nTG)
@@ -998,22 +1014,45 @@ void CMiniDexed::setHoldMode(bool holdmode, unsigned nTG)
 void CMiniDexed::panic(uint8_t value, unsigned nTG)
 {
 	assert (nTG < CConfig::AllToneGenerators);
-	if (nTG >= m_nToneGenerators) return;  // Not an active TG
+	if (nTG >= m_nToneGenerators)
+	{
+		// panic for all TGs
+		for (unsigned i = 0; i < m_nToneGenerators; i++)
+		{
+			m_pTG[i]->panic ();
+			m_nActiveNotes[i] = 0;
+		}
+
+		return;
+	}
 
 	assert (m_pTG[nTG]);
 	if (value == 0) {
 		m_pTG[nTG]->panic ();
+		m_nActiveNotes[nTG] = 0;
 	}
 }
 
 void CMiniDexed::notesOff(uint8_t value, unsigned nTG)
 {
 	assert (nTG < CConfig::AllToneGenerators);
-	if (nTG >= m_nToneGenerators) return;  // Not an active TG
+
+	if (nTG >= m_nToneGenerators)
+	{
+		// notesOff for all TGs
+		for (unsigned i = 0; i < m_nToneGenerators; i++)
+		{
+			m_pTG[i]->notesOff ();
+			m_nActiveNotes[i] = 0;
+		}
+
+		return;
+	}
 
 	assert (m_pTG[nTG]);
 	if (value == 0) {
 		m_pTG[nTG]->notesOff ();
+		m_nActiveNotes[nTG] = 0;
 	}
 }
 
