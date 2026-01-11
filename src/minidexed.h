@@ -52,6 +52,7 @@
 #include "udpmididevice.h"
 #include "net/ftpdaemon.h"
 #include "effect_chain.h"
+#include "waveformringbuffer.h"
 
 class CMiniDexed
 #ifdef ARM_ALLOW_MULTI_CORE
@@ -289,6 +290,9 @@ public:
 	void UpdateNetwork();
 	const CIPAddress& GetNetworkIPAddress();
 
+	// Audio waveform display
+	CWaveformRingBuffer* GetWaveformBuffer (void) { return &m_WaveformBuffer; }
+
 private:
 	int16_t ApplyNoteLimits (int16_t pitch, unsigned nTG);	// returns < 0 to ignore note
 	uint8_t m_uchOPMask[CConfig::AllToneGenerators];
@@ -437,6 +441,9 @@ private:
 	std::atomic<bool> m_bVolRampedDown;
 
 	const float32_t m_fRamp;
+
+	// Audio waveform display buffer
+	CWaveformRingBuffer m_WaveformBuffer;
 };
 
 #endif

@@ -82,6 +82,9 @@ private:
 	static void MCPInterruptHandlerA (void *pParam);
 	static void MCPInterruptHandlerB (void *pParam);
 
+	// Audio waveform display
+	void RenderWaveform (void);
+
 private:
 	CMiniDexed *m_pMiniDexed;
 	CGPIOManager *m_pGPIOManager;
@@ -119,6 +122,10 @@ private:
 	unsigned m_nMCPButtonClickTime;	// Tick when last click ended (for double-click)
 	unsigned m_nMCPButtonClicks;	// Click counter for double-click detection
 	bool m_bMCPButtonHeld;			// True if button is currently held
+
+	// Waveform display
+	int8_t m_WaveformSnapshot[128];	// Snapshot of waveform buffer for display
+	unsigned m_nLastWaveformUpdate;	// Tick for rate limiting
 
 	CUIMenu m_Menu;
 };

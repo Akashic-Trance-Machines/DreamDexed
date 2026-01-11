@@ -2014,6 +2014,22 @@ void CMiniDexed::ProcessSound (void)
 				arm_zip_f32(SampleBuffer[indexL], SampleBuffer[indexR], tmp_float, nFrames);
 			}
 
+			// Capture waveform samples for display (decimate for efficiency)
+			// Capture ~4 samples per audio chunk to fill 128-sample display buffer
+			{
+				unsigned nStep = nFrames / 4;
+				if (nStep < 1) nStep = 1;
+				for (unsigned i = 0; i < nFrames; i += nStep)
+				{
+					// Average L/R to mono, convert to int8 range
+					float mono = (SampleBuffer[0][i] + SampleBuffer[1][i]) * 0.5f * m_fMasterVolumeW;
+					int8_t sample = (int8_t) (mono * 127.0f);
+					if (sample > 127) sample = 127;
+					if (sample < -127) sample = -127;
+					m_WaveformBuffer.WriteSample(sample);
+				}
+			}
+
 			arm_float_to_q23(tmp_float,tmp_int,nFrames*2);
 
 			// Prevent PCM510x analog mute from kicking in

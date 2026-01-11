@@ -161,6 +161,7 @@ void CConfig::Load (void)
 	m_nSSD1306LCDHeight = m_Properties.GetNumber ("SSD1306LCDHeight", 32);
 	m_bSSD1306LCDRotate = m_Properties.GetNumber ("SSD1306LCDRotate", 0) != 0;
 	m_bSSD1306LCDMirror = m_Properties.GetNumber ("SSD1306LCDMirror", 0) != 0;
+	m_bLCDShowWaveform = m_Properties.GetNumber ("LCDShowWaveform", 0) != 0;
 
 	m_nSPIBus = m_Properties.GetNumber ("SPIBus", SPI_INACTIVE);  // Disabled by default
 	m_nSPIMode = m_Properties.GetNumber ("SPIMode", SPI_DEF_MODE);
@@ -500,6 +501,11 @@ bool CConfig::GetSSD1306LCDRotate (void) const
 bool CConfig::GetSSD1306LCDMirror (void) const
 {
 	return m_bSSD1306LCDMirror;
+}
+
+bool CConfig::GetLCDShowWaveform (void) const
+{
+	return m_bLCDShowWaveform;
 }
 
 unsigned CConfig::GetSPIBus (void) const

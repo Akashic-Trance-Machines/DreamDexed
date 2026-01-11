@@ -55,8 +55,10 @@ CUserInterface::CUserInterface (CMiniDexed *pMiniDexed, CGPIOManager *pGPIOManag
 	m_nMCPButtonClicks (0),
 	m_bMCPButtonHeld (false),
 	m_nMCPEncoderSteps (0),
+	m_nLastWaveformUpdate (0),
 	m_Menu (this, pMiniDexed, pConfig)
 {
+	memset (m_WaveformSnapshot, 0, sizeof (m_WaveformSnapshot));
 }
 
 CUserInterface::~CUserInterface (void)
@@ -320,6 +322,9 @@ void CUserInterface::Process (void)
 	{
 		m_pUIButtons->Update();
 	}
+
+	// Render waveform if enabled
+	RenderWaveform ();
 }
 
 void CUserInterface::ParameterChanged (void)
@@ -870,3 +875,55 @@ void CUserInterface::ProcessMCPButtons (uint8_t nPortA, uint8_t nPortB, bool bPo
 	}
 }
 
+// Render audio waveform in bottom half of SSD1306 display
+void CUserInterface::RenderWaveform (void)
+{
+	// Only render if SSD1306 is active and waveform is enabled
+	if (!m_pSSD1306 || !m_pConfig->GetLCDShowWaveform ())
+	{
+		return;
+	}
+
+	// Only render for 64-pixel tall displays with 4+ rows
+	if (m_pConfig->GetSSD1306LCDHeight () < 64 || m_pConfig->GetLCDRows () < 4)
+	{
+		return;
+	}
+
+	// Rate limit to ~20 FPS (50ms interval)
+	unsigned nNow = CTimer::GetClockTicks () / (CLOCKHZ / 1000);
+	if (nNow - m_nLastWaveformUpdate < 50)
+	{
+		return;
+	}
+	m_nLastWaveformUpdate = nNow;
+
+	// Get snapshot from ring buffer
+	m_pMiniDexed->GetWaveformBuffer ()->GetSnapshot (m_WaveformSnapshot);
+
+	// Clear bottom half only (y=32-63)
+	for (unsigned x = 0; x < 128; x++)
+	{
+		for (unsigned y = 32; y < 64; y++)
+		{
+			m_pSSD1306->SetPixel (x, y, CRGB16 (0, 0, 0));
+		}
+	}
+
+	// Draw waveform: center at y=48, amplitude = ±15 pixels
+	// Single pixel per X position (oscilloscope style)
+	for (unsigned x = 0; x < 128; x++)
+	{
+		// Map sample [-127..127] to y [33..63] (center at 48)
+		int sample = m_WaveformSnapshot[x];
+		int y = 48 - (sample * 15 / 127);
+		if (y < 32) y = 32;
+		if (y > 63) y = 63;
+		
+		// Draw single pixel at sample position
+		m_pSSD1306->SetPixel (x, y, CRGB16 (255, 255, 255));
+	}
+
+	// Update display
+	m_pSSD1306->Update ();
+}
