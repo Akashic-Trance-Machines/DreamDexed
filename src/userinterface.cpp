@@ -570,12 +570,14 @@ void CUserInterface::ProcessMCPInput (void)
 	{
 		g_bMCPInterruptA = false;
 		m_nMCPPortA = m_pMCP->ReadIntcapA ();
+		LOGDBG ("MCP INTA: PortA=0x%02X (was 0x%02X)", m_nMCPPortA, m_nMCPLastPortA);
 	}
 
 	if (bReadB)
 	{
 		g_bMCPInterruptB = false;
 		m_nMCPPortB = m_pMCP->ReadIntcapB ();
+		LOGDBG ("MCP INTB: PortB=0x%02X (was 0x%02X)", m_nMCPPortB, m_nMCPLastPortB);
 	}
 
 	if (bReadA || bReadB)
@@ -601,6 +603,7 @@ void CUserInterface::ProcessMCPInput (void)
 			bEncB = ((IsMCPPortA (nDataPin) ? m_nMCPPortA : m_nMCPPortB) & nBit) != 0;
 		}
 		
+		LOGDBG ("MCP Encoder: CLK=%d DATA=%d (pins %d,%d)", bEncA, bEncB, nClockPin, nDataPin);
 		DecodeMCPEncoder (bEncA, bEncB);
 
 		// Process button edge detection
@@ -641,11 +644,16 @@ void CUserInterface::DecodeMCPEncoder (bool bEncA, bool bEncB)
 	uint8_t nIndex = (m_nMCPLastAB << 2) | nCurrentAB;
 	int8_t nDelta = s_EncoderTable[nIndex];
 
+	if (nCurrentAB != m_nMCPLastAB)
+	{
+		LOGDBG ("MCP Encoder: AB %d->%d delta=%d", m_nMCPLastAB, nCurrentAB, nDelta);
+	}
 	m_nMCPLastAB = nCurrentAB;
 
 	if (nDelta == 1)
 	{
 		// Clockwise step - fire StepUp event
+		LOGDBG ("MCP Encoder: CW step -> StepUp");
 		if (m_bSwitchPressed)
 		{
 			m_Menu.EventHandler (CUIMenu::MenuEventPressAndStepUp);
@@ -658,6 +666,7 @@ void CUserInterface::DecodeMCPEncoder (bool bEncA, bool bEncB)
 	else if (nDelta == -1)
 	{
 		// Counter-clockwise step - fire StepDown event
+		LOGDBG ("MCP Encoder: CCW step -> StepDown");
 		if (m_bSwitchPressed)
 		{
 			m_Menu.EventHandler (CUIMenu::MenuEventPressAndStepDown);
