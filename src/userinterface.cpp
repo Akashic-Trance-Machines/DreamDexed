@@ -256,13 +256,15 @@ bool CUserInterface::Initialize (void)
 		LOGDBG ("MCP23017 Port B initialized (inputs with pull-ups, interrupts enabled)");
 
 		// Setup GPIO interrupt pin for Port A
+		// NOTE: MCP23017 INT is active-low and STAYS low until INTCAP/GPIO read
+		// Use LOW LEVEL detection (not falling edge) so interrupt keeps firing until cleared
 		unsigned nIntPinA = m_pConfig->GetMCPAInterruptGPIO ();
 		if (nIntPinA > 0)
 		{
 			m_pMCPInterruptPinA = new CGPIOPin (nIntPinA, GPIOModeInputPullUp, m_pGPIOManager);
 			m_pMCPInterruptPinA->ConnectInterrupt (MCPInterruptHandlerA, this);
-			m_pMCPInterruptPinA->EnableInterrupt (GPIOInterruptOnFallingEdge);
-			LOGDBG ("MCP23017 INTA on GPIO%u (falling edge)", nIntPinA);
+			m_pMCPInterruptPinA->EnableInterrupt (GPIOInterruptOnLowLevel);
+			LOGDBG ("MCP23017 INTA on GPIO%u (low level)", nIntPinA);
 		}
 
 		// Setup GPIO interrupt pin for Port B
@@ -271,8 +273,8 @@ bool CUserInterface::Initialize (void)
 		{
 			m_pMCPInterruptPinB = new CGPIOPin (nIntPinB, GPIOModeInputPullUp, m_pGPIOManager);
 			m_pMCPInterruptPinB->ConnectInterrupt (MCPInterruptHandlerB, this);
-			m_pMCPInterruptPinB->EnableInterrupt (GPIOInterruptOnFallingEdge);
-			LOGDBG ("MCP23017 INTB on GPIO%u (falling edge)", nIntPinB);
+			m_pMCPInterruptPinB->EnableInterrupt (GPIOInterruptOnLowLevel);
+			LOGDBG ("MCP23017 INTB on GPIO%u (low level)", nIntPinB);
 		}
 
 		// Read initial port states and log them
