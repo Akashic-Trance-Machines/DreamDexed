@@ -20,9 +20,6 @@ enum TSSD1306GfxCommand : u8
 class CSSD1306Gfx
 {
 public:
-class CSSD1306Gfx
-{
-public:
 	static constexpr unsigned WIDTH = 128;
 	static constexpr unsigned WAVEFORM_HEIGHT = 32;
 	static constexpr unsigned BUFFER_SIZE = WIDTH * WAVEFORM_HEIGHT / 8;  // 512 bytes
