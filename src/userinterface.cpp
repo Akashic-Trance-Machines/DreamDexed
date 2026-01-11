@@ -50,6 +50,11 @@ CUserInterface::CUserInterface (CMiniDexed *pMiniDexed, CGPIOManager *pGPIOManag
 	m_nMCPLastAB (0),
 	m_nMCPLastPortA (0xFF),
 	m_nMCPLastPortB (0xFF),
+	m_nMCPButtonPressTime (0),
+	m_nMCPButtonClickTime (0),
+	m_nMCPButtonClicks (0),
+	m_bMCPButtonHeld (false),
+	m_nMCPEncoderSteps (0),
 	m_Menu (this, pMiniDexed, pConfig)
 {
 }
@@ -684,30 +689,42 @@ void CUserInterface::DecodeMCPEncoder (bool bEncA, bool bEncB)
 	}
 	m_nMCPLastAB = nCurrentAB;
 
-	if (nDelta == 1)
+	// Accumulate steps and fire events only when threshold is reached
+	// This handles encoders that produce multiple pulses per detent
+	if (nDelta == 1 || nDelta == -1)
 	{
-		// Clockwise step - fire StepUp event
-		LOGDBG ("MCP Encoder: CW step -> StepUp");
-		if (m_bSwitchPressed)
+		m_nMCPEncoderSteps += nDelta;
+		
+		int nPulsePerStep = (int) m_pConfig->GetEncoderPulsePerStep ();
+		
+		while (m_nMCPEncoderSteps >= nPulsePerStep)
 		{
-			m_Menu.EventHandler (CUIMenu::MenuEventPressAndStepUp);
+			// Clockwise step - fire StepUp event
+			LOGDBG ("MCP Encoder: CW step -> StepUp");
+			if (m_bSwitchPressed)
+			{
+				m_Menu.EventHandler (CUIMenu::MenuEventPressAndStepUp);
+			}
+			else
+			{
+				m_Menu.EventHandler (CUIMenu::MenuEventStepUp);
+			}
+			m_nMCPEncoderSteps -= nPulsePerStep;
 		}
-		else
+		
+		while (m_nMCPEncoderSteps <= -nPulsePerStep)
 		{
-			m_Menu.EventHandler (CUIMenu::MenuEventStepUp);
-		}
-	}
-	else if (nDelta == -1)
-	{
-		// Counter-clockwise step - fire StepDown event
-		LOGDBG ("MCP Encoder: CCW step -> StepDown");
-		if (m_bSwitchPressed)
-		{
-			m_Menu.EventHandler (CUIMenu::MenuEventPressAndStepDown);
-		}
-		else
-		{
-			m_Menu.EventHandler (CUIMenu::MenuEventStepDown);
+			// Counter-clockwise step - fire StepDown event
+			LOGDBG ("MCP Encoder: CCW step -> StepDown");
+			if (m_bSwitchPressed)
+			{
+				m_Menu.EventHandler (CUIMenu::MenuEventPressAndStepDown);
+			}
+			else
+			{
+				m_Menu.EventHandler (CUIMenu::MenuEventStepDown);
+			}
+			m_nMCPEncoderSteps += nPulsePerStep;
 		}
 	}
 	// nDelta == 0 or 2: no action (no change or invalid transition)
@@ -728,12 +745,16 @@ static bool GetMCPPinState (unsigned nPin, uint8_t nPortA, uint8_t nPortB, uint8
 	return (nPort & nBit) == 0;
 }
 
-// Process MCP23017 button edge detection
+// Process MCP23017 button edge detection with timing for click/doubleclick/longpress
 void CUserInterface::ProcessMCPButtons (uint8_t nPortA, uint8_t nPortB)
 {
-	// Detect falling edges (button press, active low) using configured pins
+	// Timing constants (in milliseconds)
+	const unsigned DOUBLECLICK_TIMEOUT = m_pConfig->GetDoubleClickTimeout ();
+	const unsigned LONGPRESS_TIMEOUT = m_pConfig->GetLongPressTimeout ();
 	
-	// Select button (also encoder switch)
+	unsigned nTicks = CTimer::GetClockTicks () / (CLOCKHZ / 1000);  // Current time in ms
+	
+	// Select button (also encoder switch) - supports click/doubleclick/longpress
 	unsigned nSelectPin = m_pConfig->GetButtonPinSelect ();
 	if (IsMCPPin (nSelectPin))
 	{
@@ -742,42 +763,72 @@ void CUserInterface::ProcessMCPButtons (uint8_t nPortA, uint8_t nPortB)
 		
 		if (bNow && !bWas)
 		{
+			// Button just pressed
+			LOGDBG ("MCP Button: PRESSED (pin %d)", nSelectPin);
 			m_bSwitchPressed = true;
+			m_bMCPButtonHeld = true;
+			m_nMCPButtonPressTime = nTicks;
 		}
 		else if (!bNow && bWas)
 		{
+			// Button just released
 			m_bSwitchPressed = false;
+			m_bMCPButtonHeld = false;
+			unsigned nHoldTime = nTicks - m_nMCPButtonPressTime;
+			
+			if (nHoldTime >= LONGPRESS_TIMEOUT)
+			{
+				// Long press - event already fired while held
+				LOGDBG ("MCP Button: RELEASED after long press");
+			}
+			else
+			{
+				// Short press - count as click
+				unsigned nTimeSinceLastClick = nTicks - m_nMCPButtonClickTime;
+				m_nMCPButtonClickTime = nTicks;
+				
+				if (nTimeSinceLastClick <= DOUBLECLICK_TIMEOUT && m_nMCPButtonClicks > 0)
+				{
+					// Double click!
+					LOGDBG ("MCP Button: DOUBLE CLICK -> MenuEventHome");
+					m_Menu.EventHandler (CUIMenu::MenuEventHome);
+					m_nMCPButtonClicks = 0;
+				}
+				else
+				{
+					// First click - wait for possible second click
+					m_nMCPButtonClicks = 1;
+					LOGDBG ("MCP Button: CLICK (waiting for double click...)");
+				}
+			}
+		}
+		else if (bNow && m_bMCPButtonHeld)
+		{
+			// Button still held - check for long press
+			unsigned nHoldTime = nTicks - m_nMCPButtonPressTime;
+			if (nHoldTime >= LONGPRESS_TIMEOUT && m_nMCPButtonClicks == 0)
+			{
+				// Long press detected!
+				LOGDBG ("MCP Button: LONG PRESS -> MenuEventBack");
+				m_Menu.EventHandler (CUIMenu::MenuEventBack);
+				m_nMCPButtonClicks = 99;  // Prevent repeat
+			}
+		}
+	}
+	
+	// Check for single click timeout (fire click if no second click came)
+	if (m_nMCPButtonClicks == 1 && !m_bMCPButtonHeld)
+	{
+		unsigned nTimeSinceClick = nTicks - m_nMCPButtonClickTime;
+		if (nTimeSinceClick > DOUBLECLICK_TIMEOUT)
+		{
+			LOGDBG ("MCP Button: SINGLE CLICK -> MenuEventSelect");
 			m_Menu.EventHandler (CUIMenu::MenuEventSelect);
+			m_nMCPButtonClicks = 0;
 		}
 	}
 	
-	// Home button
-	unsigned nHomePin = m_pConfig->GetButtonPinHome ();
-	if (IsMCPPin (nHomePin) && nHomePin != nSelectPin)  // Avoid duplicate if same pin
-	{
-		bool bNow = GetMCPPinState (nHomePin, nPortA, nPortB, m_nMCPLastPortA, m_nMCPLastPortB, true);
-		bool bWas = GetMCPPinState (nHomePin, nPortA, nPortB, m_nMCPLastPortA, m_nMCPLastPortB, false);
-		
-		if (bNow && !bWas)
-		{
-			m_Menu.EventHandler (CUIMenu::MenuEventHome);
-		}
-	}
-	
-	// Back button
-	unsigned nBackPin = m_pConfig->GetButtonPinBack ();
-	if (IsMCPPin (nBackPin) && nBackPin != nSelectPin)
-	{
-		bool bNow = GetMCPPinState (nBackPin, nPortA, nPortB, m_nMCPLastPortA, m_nMCPLastPortB, true);
-		bool bWas = GetMCPPinState (nBackPin, nPortA, nPortB, m_nMCPLastPortA, m_nMCPLastPortB, false);
-		
-		if (bNow && !bWas)
-		{
-			m_Menu.EventHandler (CUIMenu::MenuEventBack);
-		}
-	}
-	
-	// Prev button
+	// Prev button (simple press detection)
 	unsigned nPrevPin = m_pConfig->GetButtonPinPrev ();
 	if (IsMCPPin (nPrevPin))
 	{
@@ -790,7 +841,7 @@ void CUserInterface::ProcessMCPButtons (uint8_t nPortA, uint8_t nPortB)
 		}
 	}
 	
-	// Next button
+	// Next button (simple press detection)
 	unsigned nNextPin = m_pConfig->GetButtonPinNext ();
 	if (IsMCPPin (nNextPin))
 	{
@@ -803,3 +854,4 @@ void CUserInterface::ProcessMCPButtons (uint8_t nPortA, uint8_t nPortB)
 		}
 	}
 }
+

@@ -242,6 +242,7 @@ void CConfig::Load (void)
 	m_bEncoderEnabled = m_Properties.GetNumber ("EncoderEnabled", 0) != 0;
 	m_nEncoderPinClock = ParsePinString (m_Properties.GetString ("EncoderPinClock", "10"), 10);
 	m_nEncoderPinData = ParsePinString (m_Properties.GetString ("EncoderPinData", "9"), 9);
+	m_nEncoderPulsePerStep = m_Properties.GetNumber ("EncoderPulsePerStep", 1);
 
 	// MCP23017 I/O Expander configuration
 	m_UIInputDevice = m_Properties.GetString ("UIInputDevice", "gpio");
@@ -834,6 +835,11 @@ unsigned CConfig::GetEncoderPinClock (void) const
 unsigned CConfig::GetEncoderPinData (void) const
 {
 	return m_nEncoderPinData;
+}
+
+unsigned CConfig::GetEncoderPulsePerStep (void) const
+{
+	return m_nEncoderPulsePerStep > 0 ? m_nEncoderPulsePerStep : 1;
 }
 
 // MCP23017 I/O Expander

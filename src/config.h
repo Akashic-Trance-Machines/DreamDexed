@@ -272,6 +272,7 @@ public:
 	bool GetEncoderEnabled (void) const;
 	unsigned GetEncoderPinClock (void) const;
 	unsigned GetEncoderPinData (void) const;
+	unsigned GetEncoderPulsePerStep (void) const;	// Pulses per detent (1 or 2, default 1)
 
 	// MCP23017 I/O Expander (for UI inputs)
 	const char *GetUIInputDevice (void) const;	// "gpio" or "mcp23017"
@@ -428,6 +429,7 @@ private:
 	bool m_bEncoderEnabled;
 	unsigned m_nEncoderPinClock;
 	unsigned m_nEncoderPinData;
+	unsigned m_nEncoderPulsePerStep;
 
 	// MCP23017 I/O Expander
 	std::string m_UIInputDevice;

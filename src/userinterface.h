@@ -112,6 +112,13 @@ private:
 	uint8_t m_nMCPLastAB;			// Last encoder A/B state (2 bits)
 	uint8_t m_nMCPLastPortA;		// Previous port A for edge detection
 	uint8_t m_nMCPLastPortB;		// Previous port B for edge detection
+	int m_nMCPEncoderSteps;			// Step accumulator for pulse-per-step divider
+	
+	// MCP button timing for click/doubleclick/longpress
+	unsigned m_nMCPButtonPressTime;	// Tick when button was pressed
+	unsigned m_nMCPButtonClickTime;	// Tick when last click ended (for double-click)
+	unsigned m_nMCPButtonClicks;	// Click counter for double-click detection
+	bool m_bMCPButtonHeld;			// True if button is currently held
 
 	CUIMenu m_Menu;
 };
