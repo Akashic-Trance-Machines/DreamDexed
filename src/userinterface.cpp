@@ -227,6 +227,11 @@ bool CUserInterface::Initialize (void)
 	// MCP23017 I/O Expander initialization
 	if (m_pConfig->GetMCPEnabled ())
 	{
+		LOGDBG ("MCP23017 init: address=0x%02X, INTA=GPIO%u, INTB=GPIO%u",
+		        m_pConfig->GetMCPAddress (),
+		        m_pConfig->GetMCPAInterruptGPIO (),
+		        m_pConfig->GetMCPBInterruptGPIO ());
+
 		m_pMCP = new CMCP23017 (*m_pI2CMaster, m_pConfig->GetMCPAddress ());
 		assert (m_pMCP);
 
@@ -236,11 +241,14 @@ bool CUserInterface::Initialize (void)
 			LOGERR ("MCP23017 Port A initialization failed");
 			return false;
 		}
+		LOGDBG ("MCP23017 Port A initialized (inputs with pull-ups, interrupts enabled)");
+
 		if (!m_pMCP->Init_UI_PortB (0xFF))
 		{
 			LOGERR ("MCP23017 Port B initialization failed");
 			return false;
 		}
+		LOGDBG ("MCP23017 Port B initialized (inputs with pull-ups, interrupts enabled)");
 
 		// Setup GPIO interrupt pin for Port A
 		unsigned nIntPinA = m_pConfig->GetMCPAInterruptGPIO ();
@@ -249,7 +257,7 @@ bool CUserInterface::Initialize (void)
 			m_pMCPInterruptPinA = new CGPIOPin (nIntPinA, GPIOModeInputPullUp, m_pGPIOManager);
 			m_pMCPInterruptPinA->ConnectInterrupt (MCPInterruptHandlerA, this);
 			m_pMCPInterruptPinA->EnableInterrupt (GPIOInterruptOnFallingEdge);
-			LOGDBG ("MCP23017 INTA on GPIO%u", nIntPinA);
+			LOGDBG ("MCP23017 INTA on GPIO%u (falling edge)", nIntPinA);
 		}
 
 		// Setup GPIO interrupt pin for Port B
@@ -259,16 +267,17 @@ bool CUserInterface::Initialize (void)
 			m_pMCPInterruptPinB = new CGPIOPin (nIntPinB, GPIOModeInputPullUp, m_pGPIOManager);
 			m_pMCPInterruptPinB->ConnectInterrupt (MCPInterruptHandlerB, this);
 			m_pMCPInterruptPinB->EnableInterrupt (GPIOInterruptOnFallingEdge);
-			LOGDBG ("MCP23017 INTB on GPIO%u", nIntPinB);
+			LOGDBG ("MCP23017 INTB on GPIO%u (falling edge)", nIntPinB);
 		}
 
-		// Read initial port states
+		// Read initial port states and log them
 		m_nMCPPortA = m_pMCP->ReadGpioA ();
 		m_nMCPPortB = m_pMCP->ReadGpioB ();
 		m_nMCPLastPortA = m_nMCPPortA;
 		m_nMCPLastPortB = m_nMCPPortB;
 
-		LOGDBG ("MCP23017 initialized at I2C address 0x%02X", m_pConfig->GetMCPAddress ());
+		LOGDBG ("MCP23017 initial state: PortA=0x%02X, PortB=0x%02X", m_nMCPPortA, m_nMCPPortB);
+		LOGDBG ("MCP23017 initialized successfully");
 	}
 
 	m_Menu.EventHandler (CUIMenu::MenuEventUpdate);
@@ -566,18 +575,43 @@ void CUserInterface::ProcessMCPInput (void)
 	bool bReadA = g_bMCPInterruptA;
 	bool bReadB = g_bMCPInterruptB;
 
-	if (bReadA)
+	// POLLING FALLBACK: If no interrupt received, poll GPIO directly
+	// This works around interrupt issues and helps debugging
+	if (!bReadA && !bReadB)
 	{
-		g_bMCPInterruptA = false;
-		m_nMCPPortA = m_pMCP->ReadIntcapA ();
-		LOGDBG ("MCP INTA: PortA=0x%02X (was 0x%02X)", m_nMCPPortA, m_nMCPLastPortA);
+		// Poll MCP directly every time Process() is called
+		uint8_t nNewPortA = m_pMCP->ReadGpioA ();
+		uint8_t nNewPortB = m_pMCP->ReadGpioB ();
+		
+		if (nNewPortA != m_nMCPPortA)
+		{
+			LOGDBG ("MCP POLL: PortA=0x%02X (was 0x%02X)", nNewPortA, m_nMCPPortA);
+			m_nMCPPortA = nNewPortA;
+			bReadA = true;
+		}
+		if (nNewPortB != m_nMCPPortB)
+		{
+			LOGDBG ("MCP POLL: PortB=0x%02X (was 0x%02X)", nNewPortB, m_nMCPPortB);
+			m_nMCPPortB = nNewPortB;
+			bReadB = true;
+		}
 	}
-
-	if (bReadB)
+	else
 	{
-		g_bMCPInterruptB = false;
-		m_nMCPPortB = m_pMCP->ReadIntcapB ();
-		LOGDBG ("MCP INTB: PortB=0x%02X (was 0x%02X)", m_nMCPPortB, m_nMCPLastPortB);
+		// Interrupt triggered - read INTCAP registers
+		if (bReadA)
+		{
+			g_bMCPInterruptA = false;
+			m_nMCPPortA = m_pMCP->ReadIntcapA ();
+			LOGDBG ("MCP INTA: PortA=0x%02X (was 0x%02X)", m_nMCPPortA, m_nMCPLastPortA);
+		}
+
+		if (bReadB)
+		{
+			g_bMCPInterruptB = false;
+			m_nMCPPortB = m_pMCP->ReadIntcapB ();
+			LOGDBG ("MCP INTB: PortB=0x%02X (was 0x%02X)", m_nMCPPortB, m_nMCPLastPortB);
+		}
 	}
 
 	if (bReadA || bReadB)
