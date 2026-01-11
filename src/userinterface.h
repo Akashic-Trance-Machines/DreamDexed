@@ -78,7 +78,7 @@ private:
 	// MCP23017 input processing
 	void ProcessMCPInput (void);
 	void DecodeMCPEncoder (bool bEncA, bool bEncB);
-	void ProcessMCPButtons (uint8_t nPortA, uint8_t nPortB);
+	void ProcessMCPButtons (uint8_t nPortA, uint8_t nPortB, bool bPortChanged);
 	static void MCPInterruptHandlerA (void *pParam);
 	static void MCPInterruptHandlerB (void *pParam);
 

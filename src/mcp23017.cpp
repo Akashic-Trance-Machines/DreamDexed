@@ -52,9 +52,12 @@ bool CMCP23017::ReadReg(uint8_t reg, uint8_t& val)
 
 bool CMCP23017::Init_UI_PortA(uint8_t inputMaskA)
 {
-    // IOCON: MIRROR=0, ODR=1 (open drain), INTPOL=0 (active low)
-    // Bit 2 = ODR (Open-Drain output)
-    if (!WriteReg(IOCON, 0b00000100)) return false;
+    // IOCON configuration:
+    // Bit 6: MIRROR=1 (INT pins are OR'd together, both fire for any interrupt)
+    // Bit 2: ODR=1 (Open-Drain output for INT pins)
+    // Bit 1: INTPOL=0 (Active-low interrupt)
+    // Value: 0b01000100 = 0x44
+    if (!WriteReg(IOCON, 0x44)) return false;
 
     // Set direction: 1 = input
     if (!WriteReg(IODIRA, inputMaskA)) return false;
@@ -68,15 +71,17 @@ bool CMCP23017::Init_UI_PortA(uint8_t inputMaskA)
     // Enable interrupt-on-change for input pins
     if (!WriteReg(GPINTENA, inputMaskA)) return false;
 
-    // Clear any pending interrupt by reading INTCAP
+    // Clear any pending interrupt by reading both INTCAP and GPIO
     (void)ReadIntcapA();
+    (void)ReadGpioA();
     return true;
 }
 
 bool CMCP23017::Init_UI_PortB(uint8_t inputMaskB)
 {
     // IOCON already configured by Init_UI_PortA, but write again for safety
-    if (!WriteReg(IOCON, 0b00000100)) return false;
+    // MIRROR=1, ODR=1, INTPOL=0
+    if (!WriteReg(IOCON, 0x44)) return false;
 
     // Set direction: 1 = input
     if (!WriteReg(IODIRB, inputMaskB)) return false;
@@ -90,8 +95,9 @@ bool CMCP23017::Init_UI_PortB(uint8_t inputMaskB)
     // Enable interrupt-on-change for input pins
     if (!WriteReg(GPINTENB, inputMaskB)) return false;
 
-    // Clear any pending interrupt by reading INTCAP
+    // Clear any pending interrupt by reading both INTCAP and GPIO
     (void)ReadIntcapB();
+    (void)ReadGpioB();
     return true;
 }
 
