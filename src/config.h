@@ -177,6 +177,7 @@ public:
 	bool     GetSSD1306LCDRotate (void) const;
 	bool     GetSSD1306LCDMirror (void) const;
 	bool     GetLCDShowWaveform (void) const;
+	bool     GetLCDShowMidiChannel (void) const;
 
 	// SPI support
 	unsigned GetSPIBus (void) const;
@@ -355,6 +356,8 @@ private:
 	bool     m_bSSD1306LCDRotate;
 	bool     m_bSSD1306LCDMirror;
 	bool     m_bLCDShowWaveform;
+	bool     m_bLCDShowMidiChannel;
+	unsigned m_nLCDPinSDA;
 
 	unsigned m_nSPIBus;
 	unsigned m_nSPIMode;

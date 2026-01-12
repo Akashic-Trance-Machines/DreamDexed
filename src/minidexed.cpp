@@ -484,6 +484,7 @@ void CMiniDexed::Process (bool bPlugAndPlayUpdated)
 		for (unsigned i = 0; i < m_nToneGenerators; ++i)
 		{
 			m_pTG[i]->resetState();
+			m_nActiveNotes[i] = 0;
 		}
 
 		DoSetNewPerformance ();

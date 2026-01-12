@@ -38,6 +38,7 @@ CUserInterface::CUserInterface (CMiniDexed *pMiniDexed, CGPIOManager *pGPIOManag
 	m_pSPIMaster (pSPIMaster),
 	m_pConfig (pConfig),
 	m_pLCD (0),
+	m_pSSD1306Gfx (0),
 	m_pLCDBuffered (0),
 	m_pUIButtons (0),
 	m_pRotaryEncoder (0),
@@ -50,13 +51,14 @@ CUserInterface::CUserInterface (CMiniDexed *pMiniDexed, CGPIOManager *pGPIOManag
 	m_nMCPLastAB (0),
 	m_nMCPLastPortA (0xFF),
 	m_nMCPLastPortB (0xFF),
+	m_nMCPEncoderSteps (0),
+	m_nMCPEncoderLastStepTime (0),
 	m_nMCPButtonPressTime (0),
 	m_nMCPButtonClickTime (0),
 	m_nMCPButtonClicks (0),
 	m_bMCPButtonHeld (false),
-	m_nMCPEncoderSteps (0),
 	m_nLastWaveformUpdate (0),
-	m_pSSD1306Gfx (0),
+	m_nLastMidiStatusUpdate (0),
 	m_Menu (this, pMiniDexed, pConfig)
 {
 	memset (m_WaveformSnapshot, 0, sizeof (m_WaveformSnapshot));
@@ -267,16 +269,16 @@ bool CUserInterface::Initialize (void)
 		}
 		LOGDBG ("MCP23017 Port B initialized (inputs with pull-ups, interrupts enabled)");
 
-		// Setup GPIO interrupt pin for Port A
-		// NOTE: MCP23017 INT is active-low and STAYS low until INTCAP/GPIO read
-		// Use LOW LEVEL detection (not falling edge) so interrupt keeps firing until cleared
+	// Setup GPIO interrupt pin for Port A
+		// NOTE: MCP23017 INT is active-low, goes low on change and stays low until INTCAP/GPIO read
+		// Use FALLING EDGE detection to get one interrupt per event, then clear by reading register
 		unsigned nIntPinA = m_pConfig->GetMCPAInterruptGPIO ();
 		if (nIntPinA > 0)
 		{
 			m_pMCPInterruptPinA = new CGPIOPin (nIntPinA, GPIOModeInputPullUp, m_pGPIOManager);
 			m_pMCPInterruptPinA->ConnectInterrupt (MCPInterruptHandlerA, this);
-			m_pMCPInterruptPinA->EnableInterrupt (GPIOInterruptOnLowLevel);
-			LOGDBG ("MCP23017 INTA on GPIO%u (low level)", nIntPinA);
+			m_pMCPInterruptPinA->EnableInterrupt (GPIOInterruptOnFallingEdge);
+			LOGDBG ("MCP23017 INTA on GPIO%u (falling edge)", nIntPinA);
 		}
 
 		// Setup GPIO interrupt pin for Port B
@@ -285,8 +287,8 @@ bool CUserInterface::Initialize (void)
 		{
 			m_pMCPInterruptPinB = new CGPIOPin (nIntPinB, GPIOModeInputPullUp, m_pGPIOManager);
 			m_pMCPInterruptPinB->ConnectInterrupt (MCPInterruptHandlerB, this);
-			m_pMCPInterruptPinB->EnableInterrupt (GPIOInterruptOnLowLevel);
-			LOGDBG ("MCP23017 INTB on GPIO%u (low level)", nIntPinB);
+			m_pMCPInterruptPinB->EnableInterrupt (GPIOInterruptOnFallingEdge);
+			LOGDBG ("MCP23017 INTB on GPIO%u (falling edge)", nIntPinB);
 		}
 
 		// Read initial port states and log them
@@ -345,12 +347,7 @@ void CUserInterface::Process (void)
 	}
 }
 
-void CUserInterface::RenderMidiStatus (void)
-{
-	// Implementation for rendering MIDI status
-	// This method was added based on the user's request to call it in Process()
-	// The actual rendering logic is not provided in the instruction, so it's left empty.
-}
+
 
 void CUserInterface::ParameterChanged (void)
 {
@@ -640,14 +637,12 @@ void CUserInterface::ProcessMCPInput (void)
 		{
 			g_bMCPInterruptA = false;
 			m_nMCPPortA = m_pMCP->ReadIntcapA ();
-			LOGDBG ("MCP INTA: PortA=0x%02X (was 0x%02X)", m_nMCPPortA, m_nMCPLastPortA);
 		}
 
 		if (bReadB)
 		{
 			g_bMCPInterruptB = false;
 			m_nMCPPortB = m_pMCP->ReadIntcapB ();
-			LOGDBG ("MCP INTB: PortB=0x%02X (was 0x%02X)", m_nMCPPortB, m_nMCPLastPortB);
 		}
 	}
 
@@ -674,7 +669,7 @@ void CUserInterface::ProcessMCPInput (void)
 			bEncB = ((IsMCPPortA (nDataPin) ? m_nMCPPortA : m_nMCPPortB) & nBit) != 0;
 		}
 		
-		LOGDBG ("MCP Encoder: CLK=%d DATA=%d (pins %d,%d)", bEncA, bEncB, nClockPin, nDataPin);
+		// (CLK/DATA logging removed for performance)
 		DecodeMCPEncoder (bEncA, bEncB);
 
 		// Process button edge detection on port change
@@ -717,27 +712,52 @@ void CUserInterface::DecodeMCPEncoder (bool bEncA, bool bEncB)
 	};
 
 	uint8_t nCurrentAB = (bEncA ? 1 : 0) | (bEncB ? 2 : 0);
+	
+	// Skip if no change
+	if (nCurrentAB == m_nMCPLastAB)
+	{
+		return;
+	}
+	
 	uint8_t nIndex = (m_nMCPLastAB << 2) | nCurrentAB;
 	int8_t nDelta = s_EncoderTable[nIndex];
-
-	if (nCurrentAB != m_nMCPLastAB)
-	{
-		LOGDBG ("MCP Encoder: AB %d->%d delta=%d", m_nMCPLastAB, nCurrentAB, nDelta);
-	}
 	m_nMCPLastAB = nCurrentAB;
 
-	// Accumulate steps and fire events only when threshold is reached
-	// This handles encoders that produce multiple pulses per detent
-	if (nDelta == 1 || nDelta == -1)
+	// Skip invalid or no-change transitions
+	if (nDelta == 0 || nDelta == 2)
 	{
-		m_nMCPEncoderSteps += nDelta;
-		
-		int nPulsePerStep = (int) m_pConfig->GetEncoderPulsePerStep ();
-		
-		while (m_nMCPEncoderSteps >= nPulsePerStep)
+		return;
+	}
+
+	// Measure time since last valid delta (for velocity/acceleration)
+	unsigned nNow = CTimer::GetClockTicks () / (CLOCKHZ / 1000);  // milliseconds
+	unsigned nTimeSinceLastDelta = nNow - m_nMCPEncoderLastStepTime;
+	m_nMCPEncoderLastStepTime = nNow;
+
+	// Calculate acceleration multiplier based on velocity (per Gray code edge)
+	// Less aggressive thresholds for smoother control
+	// < 5ms = fast (4x), < 20ms = medium (2x), else = normal (1x)
+	unsigned nAccelMultiplier = 1;
+	if (nTimeSinceLastDelta < 5)
+	{
+		nAccelMultiplier = 4;
+	}
+	else if (nTimeSinceLastDelta < 20)
+	{
+		nAccelMultiplier = 2;
+	}
+
+	// Accumulate steps
+	m_nMCPEncoderSteps += nDelta;
+	
+	int nPulsePerStep = (int) m_pConfig->GetEncoderPulsePerStep ();
+	
+	while (m_nMCPEncoderSteps >= nPulsePerStep)
+	{
+		// Clockwise step - fire StepUp event (with acceleration)
+		for (unsigned i = 0; i < nAccelMultiplier; i++)
 		{
-			// Clockwise step - fire StepUp event
-			LOGDBG ("MCP Encoder: CW step -> StepUp");
+			LOGDBG ("Encoder: StepUp (accel=%dx, dt=%ums)", nAccelMultiplier, nTimeSinceLastDelta);
 			if (m_bSwitchPressed)
 			{
 				m_Menu.EventHandler (CUIMenu::MenuEventPressAndStepUp);
@@ -746,13 +766,16 @@ void CUserInterface::DecodeMCPEncoder (bool bEncA, bool bEncB)
 			{
 				m_Menu.EventHandler (CUIMenu::MenuEventStepUp);
 			}
-			m_nMCPEncoderSteps -= nPulsePerStep;
 		}
-		
-		while (m_nMCPEncoderSteps <= -nPulsePerStep)
+		m_nMCPEncoderSteps -= nPulsePerStep;
+	}
+	
+	while (m_nMCPEncoderSteps <= -nPulsePerStep)
+	{
+		// Counter-clockwise step - fire StepDown event (with acceleration)
+		for (unsigned i = 0; i < nAccelMultiplier; i++)
 		{
-			// Counter-clockwise step - fire StepDown event
-			LOGDBG ("MCP Encoder: CCW step -> StepDown");
+			LOGDBG ("Encoder: StepDown (accel=%dx, dt=%ums)", nAccelMultiplier, nTimeSinceLastDelta);
 			if (m_bSwitchPressed)
 			{
 				m_Menu.EventHandler (CUIMenu::MenuEventPressAndStepDown);
@@ -761,10 +784,9 @@ void CUserInterface::DecodeMCPEncoder (bool bEncA, bool bEncB)
 			{
 				m_Menu.EventHandler (CUIMenu::MenuEventStepDown);
 			}
-			m_nMCPEncoderSteps += nPulsePerStep;
 		}
+		m_nMCPEncoderSteps += nPulsePerStep;
 	}
-	// nDelta == 0 or 2: no action (no change or invalid transition)
 }
 
 // Helper: Get MCP pin state for a given pin code
@@ -791,46 +813,70 @@ void CUserInterface::ProcessMCPButtons (uint8_t nPortA, uint8_t nPortB, bool bPo
 	
 	unsigned nTicks = CTimer::GetClockTicks () / (CLOCKHZ / 1000);  // Current time in ms
 	
-	// Select button (also encoder switch) - supports click/doubleclick/longpress
+	// Select button (B0) - CLICK ONLY (fires MenuEventSelect)
 	unsigned nSelectPin = m_pConfig->GetButtonPinSelect ();
-	if (IsMCPPin (nSelectPin))
+	if (IsMCPPin (nSelectPin) && bPortChanged)
 	{
-		// Edge detection only happens when port actually changed
+		bool bNow = GetMCPPinState (nSelectPin, nPortA, nPortB, m_nMCPLastPortA, m_nMCPLastPortB, true);
+		bool bWas = GetMCPPinState (nSelectPin, nPortA, nPortB, m_nMCPLastPortA, m_nMCPLastPortB, false);
+		
+		if (bNow && !bWas)
+		{
+			// Button just pressed
+			LOGDBG ("Select button PRESSED (pin %d)", nSelectPin);
+			m_bSwitchPressed = true;
+		}
+		else if (!bNow && bWas)
+		{
+			// Button just released - fire click event immediately
+			m_bSwitchPressed = false;
+			LOGDBG ("Select button CLICK -> MenuEventSelect");
+			m_Menu.EventHandler (CUIMenu::MenuEventSelect);
+		}
+	}
+	
+	// Back/Home button (B1) - supports click (Back) and doubleclick (Home)
+	unsigned nBackPin = m_pConfig->GetButtonPinBack ();
+	unsigned nHomePin = m_pConfig->GetButtonPinHome ();
+	
+	// Check if Back and Home share the same pin (typical setup)
+	if (IsMCPPin (nBackPin) && nBackPin == nHomePin)
+	{
+		// Same pin for both - use click/doubleclick detection
 		if (bPortChanged)
 		{
-			bool bNow = GetMCPPinState (nSelectPin, nPortA, nPortB, m_nMCPLastPortA, m_nMCPLastPortB, true);
-			bool bWas = GetMCPPinState (nSelectPin, nPortA, nPortB, m_nMCPLastPortA, m_nMCPLastPortB, false);
+			bool bNow = GetMCPPinState (nBackPin, nPortA, nPortB, m_nMCPLastPortA, m_nMCPLastPortB, true);
+			bool bWas = GetMCPPinState (nBackPin, nPortA, nPortB, m_nMCPLastPortA, m_nMCPLastPortB, false);
 			
 			if (bNow && !bWas)
 			{
 				// Button just pressed
-				LOGDBG ("MCP Button: PRESSED (pin %d)", nSelectPin);
-				m_bSwitchPressed = true;
+				LOGDBG ("Back/Home button PRESSED (pin %d)", nBackPin);
 				m_bMCPButtonHeld = true;
 				m_nMCPButtonPressTime = nTicks;
 			}
 			else if (!bNow && bWas)
 			{
 				// Button just released
-				m_bSwitchPressed = false;
 				m_bMCPButtonHeld = false;
 				unsigned nHoldTime = nTicks - m_nMCPButtonPressTime;
 				
 				if (nHoldTime >= LONGPRESS_TIMEOUT)
 				{
-					// Long press - event already fired while held
-					LOGDBG ("MCP Button: RELEASED after long press");
+					// Long press - no action configured for this pin in current setup
+					LOGDBG ("Back/Home button RELEASED after long press (no action)");
+					m_nMCPButtonClicks = 0;
 				}
 				else
 				{
-					// Short press - count as click
+					// Short press - check for double click
 					unsigned nTimeSinceLastClick = nTicks - m_nMCPButtonClickTime;
 					m_nMCPButtonClickTime = nTicks;
 					
 					if (nTimeSinceLastClick <= DOUBLECLICK_TIMEOUT && m_nMCPButtonClicks > 0)
 					{
-						// Double click!
-						LOGDBG ("MCP Button: DOUBLE CLICK -> MenuEventHome");
+						// Double click -> Home
+						LOGDBG ("Back/Home button DOUBLE CLICK -> MenuEventHome");
 						m_Menu.EventHandler (CUIMenu::MenuEventHome);
 						m_nMCPButtonClicks = 0;
 					}
@@ -838,37 +884,52 @@ void CUserInterface::ProcessMCPButtons (uint8_t nPortA, uint8_t nPortB, bool bPo
 					{
 						// First click - wait for possible second click
 						m_nMCPButtonClicks = 1;
-						LOGDBG ("MCP Button: CLICK (waiting for double click...)");
+						LOGDBG ("Back/Home button CLICK (waiting for double click...)");
 					}
 				}
 			}
 		}
 		
-		// Long press check runs always (even without port change)
-		if (m_bMCPButtonHeld)
+		// Check for single click timeout (fire Back if no second click came)
+		if (m_nMCPButtonClicks == 1 && !m_bMCPButtonHeld)
 		{
-			unsigned nHoldTime = nTicks - m_nMCPButtonPressTime;
-			if (nHoldTime >= LONGPRESS_TIMEOUT && m_nMCPButtonClicks == 0)
+			unsigned nTimeSinceClick = nTicks - m_nMCPButtonClickTime;
+			if (nTimeSinceClick > DOUBLECLICK_TIMEOUT)
 			{
-				// Long press detected!
-				LOGDBG ("MCP Button: LONG PRESS -> MenuEventBack");
+				LOGDBG ("Back/Home button SINGLE CLICK -> MenuEventBack");
 				m_Menu.EventHandler (CUIMenu::MenuEventBack);
-				m_nMCPButtonClicks = 99;  // Prevent repeat
+				m_nMCPButtonClicks = 0;
 			}
 		}
 	}
-	
-	// Check for single click timeout (fire click if no second click came) - runs always
-	if (m_nMCPButtonClicks == 1 && !m_bMCPButtonHeld)
+	else
 	{
-		unsigned nTimeSinceClick = nTicks - m_nMCPButtonClickTime;
-		if (nTimeSinceClick > DOUBLECLICK_TIMEOUT)
+		// Separate pins for Back and Home (simple click detection for each)
+		if (bPortChanged && IsMCPPin (nBackPin))
 		{
-			LOGDBG ("MCP Button: SINGLE CLICK -> MenuEventSelect");
-			m_Menu.EventHandler (CUIMenu::MenuEventSelect);
-			m_nMCPButtonClicks = 0;
+			bool bNow = GetMCPPinState (nBackPin, nPortA, nPortB, m_nMCPLastPortA, m_nMCPLastPortB, true);
+			bool bWas = GetMCPPinState (nBackPin, nPortA, nPortB, m_nMCPLastPortA, m_nMCPLastPortB, false);
+			
+			if (bNow && !bWas)
+			{
+				LOGDBG ("Back button CLICK -> MenuEventBack");
+				m_Menu.EventHandler (CUIMenu::MenuEventBack);
+			}
+		}
+		
+		if (bPortChanged && IsMCPPin (nHomePin) && nHomePin != nBackPin)
+		{
+			bool bNow = GetMCPPinState (nHomePin, nPortA, nPortB, m_nMCPLastPortA, m_nMCPLastPortB, true);
+			bool bWas = GetMCPPinState (nHomePin, nPortA, nPortB, m_nMCPLastPortA, m_nMCPLastPortB, false);
+			
+			if (bNow && !bWas)
+			{
+				LOGDBG ("Home button CLICK -> MenuEventHome");
+				m_Menu.EventHandler (CUIMenu::MenuEventHome);
+			}
 		}
 	}
+
 	// Prev/Next buttons only need edge detection when port changes
 	if (bPortChanged)
 	{
@@ -925,29 +986,53 @@ void CUserInterface::RenderWaveform (void)
 	m_pSSD1306Gfx->Clear ();
 
 	// Draw waveform: 128 samples -> 128 pixels
-	// Center at y=16 (relative to our 32-pixel waveform area), amplitude ±15 pixels
+	// Center at y=14 (relative to our 32-pixel waveform area), amplitude ±13 pixels
+	// Using y=0-28 to leave room for MIDI status bars at bottom
+	int lastY = 14;
 	for (unsigned x = 0; x < 128; x++)
 	{
 		int sample = m_WaveformSnapshot[x];
-		// Map sample [-127..127] to y [1..31] (center at 16)
-		int y = 16 - (sample * 15 / 127);
-		if (y < 0) y = 0;
-		if (y > 31) y = 31;
+		// Map sample [-127..127] to y [1..27] (center at 14), 4x original amplitude
+		int y = 14 - (sample * 13 / 16);  // 8x original amplitude (was /127)
+		if (y < 1) y = 1;
+		if (y > 27) y = 27;
 		
-		// Draw single pixel (oscilloscope style)
-		m_pSSD1306Gfx->SetPixel (x, y);
+		// Draw vertical line from last Y to current Y for smooth waveform
+		m_pSSD1306Gfx->DrawVLine (x, lastY, y);
+		lastY = y;
 	}
 
-	// Send to display
+	// If MIDI channel display is also enabled, draw it into the same buffer
+	if (m_pConfig->GetLCDShowMidiChannel ())
+	{
+		unsigned activeNotes[8];
+		for (unsigned i = 0; i < 8; i++)
+		{
+			activeNotes[i] = m_pMiniDexed->GetActiveNotes(i);
+		}
+		m_pSSD1306Gfx->DrawMidiStatusIntoBuffer(activeNotes);
+	}
+
+	// Send to display (single update for both waveform and MIDI status)
 	m_pSSD1306Gfx->UpdateDisplay ();
 }
 
 void CUserInterface::RenderMidiStatus (void)
 {
-	if (!m_pSSD1306Gfx)
+	// If waveform is also enabled, MIDI status is drawn as part of RenderWaveform
+	// Only render separately if waveform is disabled
+	if (!m_pSSD1306Gfx || !m_pConfig->GetLCDShowMidiChannel() || m_pConfig->GetLCDShowWaveform())
 	{
 		return;
 	}
+
+	// Rate limit to ~10 FPS (100ms interval) to save I2C bandwidth
+	unsigned nNow = CTimer::GetClockTicks () / (CLOCKHZ / 1000);
+	if (nNow - m_nLastMidiStatusUpdate < 100)
+	{
+		return;
+	}
+	m_nLastMidiStatusUpdate = nNow;
 
 	// Gather active note counts
 	unsigned activeNotes[8];
@@ -958,4 +1043,5 @@ void CUserInterface::RenderMidiStatus (void)
 
 	m_pSSD1306Gfx->DrawMidiStatus(activeNotes);
 }
+
 

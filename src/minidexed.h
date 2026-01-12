@@ -91,6 +91,8 @@ public:
 	void SetResonance (int nResonance, unsigned nTG);		// 0 .. 99
 	void SetMIDIChannel (uint8_t uchChannel, unsigned nTG);
 
+	unsigned GetActiveNotes(unsigned nTG) { return m_nActiveNotes[nTG]; }
+
 	void keyup (int16_t pitch, unsigned nTG);
 	void keydown (int16_t pitch, uint8_t velocity, unsigned nTG);
 
@@ -444,6 +446,9 @@ private:
 
 	// Audio waveform display buffer
 	CWaveformRingBuffer m_WaveformBuffer;
+	
+	// Active notes tracking for MIDI visualizer
+	unsigned m_nActiveNotes[CConfig::AllToneGenerators];
 };
 
 #endif

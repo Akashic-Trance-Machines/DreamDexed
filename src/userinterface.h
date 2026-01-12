@@ -85,6 +85,7 @@ private:
 
 	// Audio waveform display
 	void RenderWaveform (void);
+	void RenderMidiStatus (void);
 
 private:
 	CMiniDexed *m_pMiniDexed;
@@ -118,6 +119,7 @@ private:
 	uint8_t m_nMCPLastPortA;		// Previous port A for edge detection
 	uint8_t m_nMCPLastPortB;		// Previous port B for edge detection
 	int m_nMCPEncoderSteps;			// Step accumulator for pulse-per-step divider
+	unsigned m_nMCPEncoderLastStepTime;	// Tick when last step was fired (for acceleration)
 	
 	// MCP button timing for click/doubleclick/longpress
 	unsigned m_nMCPButtonPressTime;	// Tick when button was pressed
@@ -128,6 +130,7 @@ private:
 	// Waveform display
 	int8_t m_WaveformSnapshot[128];	// Snapshot of waveform buffer for display
 	unsigned m_nLastWaveformUpdate;	// Tick for rate limiting
+	unsigned m_nLastMidiStatusUpdate;	// Tick for rate limiting
 
 	CUIMenu m_Menu;
 };

@@ -54,3 +54,6 @@ Synth_Dexed
 
 # Build directories
 minidexed_*
+
+# OSX related files
+.DS_Store

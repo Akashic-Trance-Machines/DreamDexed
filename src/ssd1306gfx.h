@@ -14,6 +14,7 @@ enum TSSD1306GfxCommand : u8
 {
 	GfxSetColumnAddress = 0x21,
 	GfxSetPageAddress   = 0x22,
+	GfxSetMemoryAddressingMode = 0x20,
 	GfxSetStartLine     = 0x40,
 };
 
@@ -55,11 +56,45 @@ public:
 			m_FrameBuffer[nByteOffset] &= ~(1 << nBit);
 	}
 
+	// Draw a vertical line for thicker waveform (x: 0-127, y1/y2: 0-31)
+	void DrawVLine (unsigned x, unsigned y1, unsigned y2)
+	{
+		if (x >= WIDTH) return;
+		if (y1 > y2) { unsigned t = y1; y1 = y2; y2 = t; }
+		for (unsigned y = y1; y <= y2 && y < WAVEFORM_HEIGHT; y++)
+		{
+			SetPixel(x, y);
+		}
+	}
+
+	// Draw MIDI status bars into the framebuffer (bottom row of waveform area)
+	void DrawMidiStatusIntoBuffer (const unsigned *pActiveNotes)
+	{
+		// Draw into the bottom 2 pixels of the waveform area (y=30-31)
+		for (unsigned tg = 0; tg < 8; tg++)
+		{
+			if (pActiveNotes[tg] > 0)
+			{
+				// Draw 12-pixel bar with 2-pixel padding
+				unsigned startX = (tg * 16) + 2;
+				for (unsigned i = 0; i < 12; i++)
+				{
+					SetPixel(startX + i, 30);
+					SetPixel(startX + i, 31);
+				}
+			}
+		}
+	}
+
 	// Send the waveform framebuffer content to the display (bottom 32 rows)
 	void UpdateDisplay (void)
 	{
 		// Only update waveform area if screen is large enough
 		if (m_nHeight < 64) return;
+
+		// Switch to Horizontal Addressing Mode for bulk write
+		WriteCommand (GfxSetMemoryAddressingMode);
+		WriteCommand (0x00);
 
 		// Set column address range: 0-127
 		WriteCommand (GfxSetColumnAddress);
@@ -77,48 +112,27 @@ public:
 		memcpy (packet + 1, m_FrameBuffer, BUFFER_SIZE);
 		
 		m_pI2CMaster->Write (m_nAddress, packet, sizeof(packet));
-	}
 
-	// Draw MIDI status bar on the absolute bottom page of the display
-	void DrawMidiStatus (const unsigned *pActiveNotes)
-	{
-		u8 statusBar[WIDTH];
-		memset(statusBar, 0, WIDTH);
-
-		// 8 Tone Generators, 16 pixels each
-		for (unsigned tg = 0; tg < 8; tg++)
-		{
-			if (pActiveNotes[tg] > 0)
-			{
-				// Draw 12-pixel bar with 2-pixel padding
-				unsigned startX = (tg * 16) + 2;
-				for (unsigned i = 0; i < 12; i++)
-				{
-					// Draw line at bottom (bit 7)
-					statusBar[startX + i] = 0x80; 
-				}
-			}
-		}
-
-		// Calculate target page (Page 3 for 32px, Page 7 for 64px)
-		u8 targetPage = (m_nHeight / 8) - 1;
-
-		// Set column address range: 0-127
+		// Reset column and page ranges to full screen for standard driver
+		// (Stay in Horizontal Addressing Mode as Circle's SSD1306 driver uses it too)
 		WriteCommand (GfxSetColumnAddress);
 		WriteCommand (0x00);
 		WriteCommand (WIDTH - 1);
-
-		// Set page address range: Target Page only
 		WriteCommand (GfxSetPageAddress);
-		WriteCommand (targetPage);
-		WriteCommand (targetPage);
-
-		// Write status line
-		u8 packet[1 + WIDTH];
-		packet[0] = 0x40;
-		memcpy (packet + 1, statusBar, WIDTH);
+		WriteCommand (0);
+		WriteCommand (7);
 		
-		m_pI2CMaster->Write (m_nAddress, packet, sizeof(packet));
+		// Reset start line to 0 to ensure text isn't shifted
+		WriteCommand (0x40);
+	}
+
+	// Legacy method for standalone MIDI status (deprecated, use DrawMidiStatusIntoBuffer)
+	void DrawMidiStatus (const unsigned *pActiveNotes)
+	{
+		// Now just calls the buffer version and updates display
+		// This maintains compatibility but integrates into waveform area
+		DrawMidiStatusIntoBuffer(pActiveNotes);
+		UpdateDisplay();
 	}
 
 private:
@@ -136,3 +150,4 @@ private:
 };
 
 #endif
+

@@ -54,10 +54,10 @@ bool CMCP23017::Init_UI_PortA(uint8_t inputMaskA)
 {
     // IOCON configuration:
     // Bit 6: MIRROR=1 (INT pins are OR'd together, both fire for any interrupt)
-    // Bit 2: ODR=1 (Open-Drain output for INT pins)
+    // Bit 2: ODR=0 (Push-Pull output for INT pins - more reliable with RPi internal pull-up)
     // Bit 1: INTPOL=0 (Active-low interrupt)
-    // Value: 0b01000100 = 0x44
-    if (!WriteReg(IOCON, 0x44)) return false;
+    // Value: 0b01000000 = 0x40
+    if (!WriteReg(IOCON, 0x40)) return false;
 
     // Set direction: 1 = input
     if (!WriteReg(IODIRA, inputMaskA)) return false;
@@ -80,8 +80,8 @@ bool CMCP23017::Init_UI_PortA(uint8_t inputMaskA)
 bool CMCP23017::Init_UI_PortB(uint8_t inputMaskB)
 {
     // IOCON already configured by Init_UI_PortA, but write again for safety
-    // MIRROR=1, ODR=1, INTPOL=0
-    if (!WriteReg(IOCON, 0x44)) return false;
+    // MIRROR=1, ODR=0 (Push-Pull), INTPOL=0
+    if (!WriteReg(IOCON, 0x40)) return false;
 
     // Set direction: 1 = input
     if (!WriteReg(IODIRB, inputMaskB)) return false;
