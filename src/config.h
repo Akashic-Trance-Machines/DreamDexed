@@ -260,6 +260,15 @@ public:
 	unsigned GetEncoderPinData() const;
 	unsigned GetEncoderDetents() const;
 
+	// MCP23017 I/O Expander
+	const char *GetUIInputDevice() const;
+	unsigned GetMCPAddress() const;
+	unsigned GetMCPAInterruptGPIO() const;
+	unsigned GetMCPBInterruptGPIO() const;
+	unsigned GetMCPResetGPIO() const;
+	unsigned GetOLEDResetGPIO() const;
+	unsigned GetEncoderPulsePerStep() const;
+
 	// Debug
 	bool GetMIDIDumpEnabled() const;
 	bool GetProfileEnabled() const;
@@ -415,6 +424,14 @@ private:
 	unsigned m_nEncoderPinClock;
 	unsigned m_nEncoderPinData;
 	unsigned m_nEncoderDetents;
+
+	std::string m_UIInputDevice;
+	unsigned m_nMCPAddress;
+	unsigned m_nMCPAInterruptGPIO;
+	unsigned m_nMCPBInterruptGPIO;
+	unsigned m_nMCPResetGPIO;
+	unsigned m_nOLEDResetGPIO;
+	unsigned m_nEncoderPulsePerStep;
 
 	bool m_bMIDIDumpEnabled;
 	bool m_bProfileEnabled;

@@ -22,14 +22,18 @@
 #include <cstdint>
 
 #include <circle/gpiomanager.h>
+#include <circle/gpiopin.h>
 #include <circle/i2cmaster.h>
 #include <circle/spimaster.h>
+#include <circle/timer.h>
 #include <circle/writebuffer.h>
 #include <display/chardevice.h>
 #include <display/hd44780device.h>
 #include <display/ssd1306device.h>
+#include <display/ssd1309display.h>
 #include <display/st7789device.h>
 #include <display/st7789display.h>
+#include <gpio/mcp23017.h>
 #include <sensor/ky040.h>
 
 #include "config.h"
@@ -73,6 +77,9 @@ private:
 	static void UIButtonsEventStub(CUIButton::BtnEvent Event, void *pParam);
 	void UISetMIDIButtonChannel(int nCh);
 
+	// MCP23017 polling
+	void PollMCP();
+
 private:
 	CMiniDexed *m_pMiniDexed;
 	CGPIOManager *m_pGPIOManager;
@@ -83,6 +90,7 @@ private:
 	CCharDevice *m_pLCD;
 	CHD44780Device *m_pHD44780;
 	CSSD1306Device *m_pSSD1306;
+	CSSD1309Display *m_pSSD1309;
 	CST7789Display *m_pST7789Display;
 	CST7789Device *m_pST7789;
 	CWriteBufferDevice *m_pLCDBuffered;
@@ -93,6 +101,19 @@ private:
 
 	CKY040 *m_pRotaryEncoder;
 	bool m_bSwitchPressed;
+
+	// MCP23017 I/O Expander
+	CMCP23017 *m_pMCP;
+	bool m_bUseMCP;
+
+	// MCP23017 encoder state (4 encoders)
+	static const unsigned NUM_ENCODERS = 4;
+	uint8_t m_nLastEncoderState[NUM_ENCODERS]; // last A/B quadrature state per encoder
+	int m_nEncoderAccumulator[NUM_ENCODERS];   // step accumulator per encoder
+
+	// MCP23017 button state (Port A: 4 encoder clicks + 4 nav buttons)
+	uint8_t m_nLastPortA;      // last Port A reading for debounce
+	unsigned m_nDebounceTimer; // simple debounce counter
 
 	CUIMenu m_Menu;
 };

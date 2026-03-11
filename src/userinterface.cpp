@@ -26,16 +26,20 @@
 
 #include <circle/font.h>
 #include <circle/gpiomanager.h>
+#include <circle/gpiopin.h>
 #include <circle/i2cmaster.h>
 #include <circle/logger.h>
 #include <circle/spimaster.h>
 #include <circle/startup.h>
 #include <circle/string.h>
+#include <circle/timer.h>
 #include <circle/writebuffer.h>
 #include <display/hd44780device.h>
 #include <display/ssd1306device.h>
+#include <display/ssd1309display.h>
 #include <display/st7789device.h>
 #include <display/st7789display.h>
+#include <gpio/mcp23017.h>
 #include <sensor/ky040.h>
 
 #include "config.h"
@@ -53,12 +57,26 @@ m_pI2CMaster{pI2CMaster},
 m_pSPIMaster{pSPIMaster},
 m_pConfig{pConfig},
 m_pLCD{},
+m_pHD44780{},
+m_pSSD1306{},
+m_pSSD1309{},
+m_pST7789Display{},
+m_pST7789{},
 m_pLCDBuffered{},
 m_pUIButtons{},
 m_pRotaryEncoder{},
 m_bSwitchPressed{},
+m_pMCP{},
+m_bUseMCP{false},
+m_nLastPortA{0xFF},
+m_nDebounceTimer{0},
 m_Menu{this, pMiniDexed, pConfig}
 {
+	for (unsigned i = 0; i < NUM_ENCODERS; i++)
+	{
+		m_nLastEncoderState[i] = 0x03; // both channels HIGH (pull-up default)
+		m_nEncoderAccumulator[i] = 0;
+	}
 }
 
 CUserInterface::~CUserInterface()
@@ -67,11 +85,63 @@ CUserInterface::~CUserInterface()
 	delete m_pUIButtons;
 	delete m_pLCDBuffered;
 	delete m_pLCD;
+	delete m_pMCP;
+	delete m_pSSD1309;
 }
 
 bool CUserInterface::Initialize()
 {
 	assert(m_pConfig);
+
+	// Check if MCP23017 is the input device
+	m_bUseMCP = (strcmp(m_pConfig->GetUIInputDevice(), "mcp23017") == 0);
+
+	if (m_bUseMCP)
+	{
+		// Hardware reset MCP23017
+		unsigned nMCPResetPin = m_pConfig->GetMCPResetGPIO();
+		CGPIOPin mcpResetPin(nMCPResetPin, GPIOModeOutput);
+		mcpResetPin.Write(HIGH);
+		CTimer::SimpleMsDelay(10);
+		mcpResetPin.Write(LOW);
+		CTimer::SimpleMsDelay(10);
+		mcpResetPin.Write(HIGH);
+		CTimer::SimpleMsDelay(100);
+
+		// Initialize MCP23017 I2C GPIO expander
+		m_pMCP = new CMCP23017(m_pI2CMaster,
+				       static_cast<u8>(m_pConfig->GetMCPAddress()));
+		assert(m_pMCP);
+
+		if (!m_pMCP->Initialize())
+		{
+			LOGERR("MCP23017 initialization failed");
+			return false;
+		}
+
+		LOGDBG("MCP23017 initialized at 0x%02X", m_pConfig->GetMCPAddress());
+	}
+
+	// SSD1309 OLED hardware reset (Option B: use CSSD1309Display for reset only)
+	unsigned nOLEDResetPin = m_pConfig->GetOLEDResetGPIO();
+	if (nOLEDResetPin != 0)
+	{
+		// Create SSD1309Display just for hardware reset
+		m_pSSD1309 = new CSSD1309Display(m_pI2CMaster,
+						 nOLEDResetPin,
+						 m_pConfig->GetSSD1306LCDI2CAddress());
+		assert(m_pSSD1309);
+
+		// Initialize performs hardware reset and SSD1309-specific init sequence
+		if (!m_pSSD1309->Initialize())
+		{
+			LOGDBG("SSD1309 hardware reset/init failed, continuing with SSD1306 driver");
+		}
+		else
+		{
+			LOGDBG("SSD1309 hardware reset and init complete");
+		}
+	}
 
 	if (m_pConfig->GetLCDEnabled())
 	{
@@ -209,7 +279,7 @@ bool CUserInterface::Initialize()
 
 	LOGDBG("Button User Interface initialized");
 
-	if (m_pConfig->GetEncoderEnabled())
+	if (m_pConfig->GetEncoderEnabled() && !m_bUseMCP)
 	{
 		m_pRotaryEncoder = new CKY040(m_pConfig->GetEncoderPinClock(),
 					      m_pConfig->GetEncoderPinData(),
@@ -253,6 +323,121 @@ void CUserInterface::Process()
 	if (m_pUIButtons)
 	{
 		m_pUIButtons->Update();
+	}
+	if (m_bUseMCP && m_pMCP)
+	{
+		PollMCP();
+	}
+}
+
+void CUserInterface::PollMCP()
+{
+	assert(m_pMCP);
+
+	// Read both MCP23017 ports
+	uint8_t nPortA = m_pMCP->ReadPortA(); // buttons + encoder clicks
+	uint8_t nPortB = m_pMCP->ReadPortB(); // encoder rotation
+
+	unsigned nPulsePerStep = m_pConfig->GetEncoderPulsePerStep();
+	if (nPulsePerStep == 0)
+	{
+		nPulsePerStep = 1;
+	}
+
+	// --- Decode 4 encoders from Port B ---
+	// Per GPIO_PINOUT.md, channels are swapped (B read as A, A read as B):
+	// Encoder 1 (top):    GPB0=ChB, GPB1=ChA
+	// Encoder 2:          GPB2=ChB, GPB3=ChA
+	// Encoder 3:          GPB4=ChB, GPB5=ChA
+	// Encoder 4 (bottom): GPB6=ChB, GPB7=ChA
+	for (unsigned enc = 0; enc < NUM_ENCODERS; enc++)
+	{
+		// Extract the 2 bits for this encoder (swapped: bit0=B, bit1=A)
+		unsigned nBitOffset = enc * 2;
+		uint8_t nRawB = (nPortB >> nBitOffset) & 0x01;     // Channel B
+		uint8_t nRawA = (nPortB >> (nBitOffset + 1)) & 0x01; // Channel A
+
+		// Current state: A in bit1, B in bit0
+		uint8_t nCurrentState = (nRawA << 1) | nRawB;
+		uint8_t nPrevState = m_nLastEncoderState[enc];
+
+		if (nCurrentState != nPrevState)
+		{
+			// Quadrature state table for direction detection
+			// State transitions: 00->01->11->10 = CW, 00->10->11->01 = CCW
+			static const int8_t quadTable[16] = {
+				 0, -1,  1,  0,
+				 1,  0,  0, -1,
+				-1,  0,  0,  1,
+				 0,  1, -1,  0
+			};
+
+			int8_t nDirection = quadTable[(nPrevState << 2) | nCurrentState];
+			m_nEncoderAccumulator[enc] += nDirection;
+
+			// Only emit event when accumulator reaches threshold
+			if (m_nEncoderAccumulator[enc] >= (int)nPulsePerStep)
+			{
+				m_nEncoderAccumulator[enc] = 0;
+				// Encoder 0 is the main encoder for menu navigation
+				m_Menu.EventHandler(CUIMenu::MenuEventStepUp);
+			}
+			else if (m_nEncoderAccumulator[enc] <= -(int)nPulsePerStep)
+			{
+				m_nEncoderAccumulator[enc] = 0;
+				m_Menu.EventHandler(CUIMenu::MenuEventStepDown);
+			}
+
+			m_nLastEncoderState[enc] = nCurrentState;
+		}
+	}
+
+	// --- Decode Port A buttons (active-low, active = 0) ---
+	// Only process on state change (simple debounce)
+	if (nPortA != m_nLastPortA)
+	{
+		// Detect falling edges (button press: was HIGH, now LOW)
+		uint8_t nPressed = m_nLastPortA & ~nPortA;
+
+		// Encoder clicks (GPA0-GPA3, reverse order per pinout)
+		// GPA3 = Encoder 1 click (top), GPA0 = Encoder 4 click (bottom)
+		if (nPressed & (1 << 3)) // GPA3 = Encoder 1 click
+		{
+			m_Menu.EventHandler(CUIMenu::MenuEventSelect);
+		}
+		if (nPressed & (1 << 2)) // GPA2 = Encoder 2 click
+		{
+			m_Menu.EventHandler(CUIMenu::MenuEventSelect);
+		}
+		if (nPressed & (1 << 1)) // GPA1 = Encoder 3 click
+		{
+			m_Menu.EventHandler(CUIMenu::MenuEventSelect);
+		}
+		if (nPressed & (1 << 0)) // GPA0 = Encoder 4 click
+		{
+			m_Menu.EventHandler(CUIMenu::MenuEventSelect);
+		}
+
+		// Nav buttons (GPA4-GPA7, reverse order per pinout)
+		// GPA7 = Main (top), GPA6 = Voice, GPA5 = FX, GPA4 = Mix (bottom)
+		if (nPressed & (1 << 7)) // GPA7 = Main page
+		{
+			m_Menu.EventHandler(CUIMenu::MenuEventHome);
+		}
+		if (nPressed & (1 << 6)) // GPA6 = Voice page
+		{
+			m_Menu.EventHandler(CUIMenu::MenuEventBack);
+		}
+		if (nPressed & (1 << 5)) // GPA5 = FX page
+		{
+			m_Menu.EventHandler(CUIMenu::MenuEventPgmUp);
+		}
+		if (nPressed & (1 << 4)) // GPA4 = Mix page
+		{
+			m_Menu.EventHandler(CUIMenu::MenuEventPgmDown);
+		}
+
+		m_nLastPortA = nPortA;
 	}
 }
 

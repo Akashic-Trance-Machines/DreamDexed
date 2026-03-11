@@ -52,6 +52,9 @@ make -j
 cd ../sensor/
 make clean || true
 make -j
+cd ../gpio/
+make clean || true
+make -j
 cd ../Properties/
 make clean || true
 make -j

@@ -267,6 +267,15 @@ void CConfig::Load()
 		m_nEncoderDetents = 4;
 	}
 
+	// MCP23017 I/O Expander
+	m_UIInputDevice = m_Properties.GetString("UIInputDevice", "gpio");
+	m_nMCPAddress = m_Properties.GetNumber("MCPAddress", 0x20);
+	m_nMCPAInterruptGPIO = m_Properties.GetNumber("MCPAInterruptGPIO", 16);
+	m_nMCPBInterruptGPIO = m_Properties.GetNumber("MCPBInterruptGPIO", 20);
+	m_nMCPResetGPIO = m_Properties.GetNumber("MCPResetGPIO", 24);
+	m_nOLEDResetGPIO = m_Properties.GetNumber("OLEDResetGPIO", 23);
+	m_nEncoderPulsePerStep = m_Properties.GetNumber("EncoderPulsePerStep", 2);
+
 	m_bMIDIDumpEnabled = m_Properties.GetNumber("MIDIDumpEnabled", 0) != 0;
 	m_bProfileEnabled = m_Properties.GetNumber("ProfileEnabled", 0) != 0;
 	m_bLogThrottling = m_Properties.GetNumber("LogThrottling", 0);
@@ -879,6 +888,41 @@ unsigned CConfig::GetEncoderPinData() const
 unsigned CConfig::GetEncoderDetents() const
 {
 	return m_nEncoderDetents;
+}
+
+const char *CConfig::GetUIInputDevice() const
+{
+	return m_UIInputDevice.c_str();
+}
+
+unsigned CConfig::GetMCPAddress() const
+{
+	return m_nMCPAddress;
+}
+
+unsigned CConfig::GetMCPAInterruptGPIO() const
+{
+	return m_nMCPAInterruptGPIO;
+}
+
+unsigned CConfig::GetMCPBInterruptGPIO() const
+{
+	return m_nMCPBInterruptGPIO;
+}
+
+unsigned CConfig::GetMCPResetGPIO() const
+{
+	return m_nMCPResetGPIO;
+}
+
+unsigned CConfig::GetOLEDResetGPIO() const
+{
+	return m_nOLEDResetGPIO;
+}
+
+unsigned CConfig::GetEncoderPulsePerStep() const
+{
+	return m_nEncoderPulsePerStep;
 }
 
 bool CConfig::GetMIDIDumpEnabled() const
