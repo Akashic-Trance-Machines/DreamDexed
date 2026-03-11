@@ -284,8 +284,7 @@ bool CUserInterface::Initialize()
 		m_pRotaryEncoder = new CKY040(m_pConfig->GetEncoderPinClock(),
 					      m_pConfig->GetEncoderPinData(),
 					      m_pConfig->GetButtonPinShortcut(),
-					      m_pGPIOManager,
-					      m_pConfig->GetEncoderDetents());
+					      m_pGPIOManager);
 		assert(m_pRotaryEncoder);
 
 		if (!m_pRotaryEncoder->Initialize())
