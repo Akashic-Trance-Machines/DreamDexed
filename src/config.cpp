@@ -925,6 +925,11 @@ unsigned CConfig::GetEncoderPulsePerStep() const
 	return m_nEncoderPulsePerStep;
 }
 
+const char *CConfig::GetPropertyString(const char *pName, const char *pDefault) const
+{
+	return m_Properties.GetString(pName, pDefault);
+}
+
 bool CConfig::GetMIDIDumpEnabled() const
 {
 	return m_bMIDIDumpEnabled;

@@ -269,6 +269,9 @@ public:
 	unsigned GetOLEDResetGPIO() const;
 	unsigned GetEncoderPulsePerStep() const;
 
+	// Generic property string access (for MCP pin name parsing)
+	const char *GetPropertyString(const char *pName, const char *pDefault = "") const;
+
 	// Debug
 	bool GetMIDIDumpEnabled() const;
 	bool GetProfileEnabled() const;

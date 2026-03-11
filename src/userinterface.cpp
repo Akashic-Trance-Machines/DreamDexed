@@ -68,15 +68,14 @@ m_pRotaryEncoder{},
 m_bSwitchPressed{},
 m_pMCP{},
 m_bUseMCP{false},
+m_nMCPButtonCount{0},
+m_nMCPEncoderCount{0},
 m_nLastPortA{0xFF},
-m_nDebounceTimer{0},
+m_nLastPortB{0xFF},
 m_Menu{this, pMiniDexed, pConfig}
 {
-	for (unsigned i = 0; i < NUM_ENCODERS; i++)
-	{
-		m_nLastEncoderState[i] = 0x03; // both channels HIGH (pull-up default)
-		m_nEncoderAccumulator[i] = 0;
-	}
+	memset(m_MCPButtons, 0, sizeof(m_MCPButtons));
+	memset(m_MCPEncoders, 0, sizeof(m_MCPEncoders));
 }
 
 CUserInterface::~CUserInterface()
@@ -87,6 +86,55 @@ CUserInterface::~CUserInterface()
 	delete m_pLCD;
 	delete m_pMCP;
 	delete m_pSSD1309;
+}
+
+// Parse MCP pin string like "GPA0", "GPB7" → {valid, isPortA, bit}
+TMCPPin CUserInterface::ParseMCPPin(const char *pStr)
+{
+	TMCPPin pin = {false, false, 0};
+
+	if (!pStr || strlen(pStr) < 4)
+		return pin;
+
+	// Must start with "GP" or "gp"
+	if ((pStr[0] != 'G' && pStr[0] != 'g') ||
+	    (pStr[1] != 'P' && pStr[1] != 'p'))
+		return pin;
+
+	// Port letter: A or B
+	if (pStr[2] == 'A' || pStr[2] == 'a')
+		pin.bIsPortA = true;
+	else if (pStr[2] == 'B' || pStr[2] == 'b')
+		pin.bIsPortA = false;
+	else
+		return pin;
+
+	// Bit number: 0-7
+	if (pStr[3] < '0' || pStr[3] > '7')
+		return pin;
+
+	pin.nBit = pStr[3] - '0';
+	pin.bValid = true;
+	return pin;
+}
+
+// Add a button binding from config property to menu event
+void CUserInterface::AddMCPButtonBinding(const char *pPinStr, CUIMenu::TMenuEvent Event)
+{
+	TMCPPin pin = ParseMCPPin(pPinStr);
+	if (!pin.bValid)
+		return;
+
+	if (m_nMCPButtonCount >= MAX_MCP_BUTTONS)
+		return;
+
+	m_MCPButtons[m_nMCPButtonCount].bIsPortA = pin.bIsPortA;
+	m_MCPButtons[m_nMCPButtonCount].nBit = pin.nBit;
+	m_MCPButtons[m_nMCPButtonCount].Event = Event;
+	m_nMCPButtonCount++;
+
+	LOGDBG("MCP button: %s → event %d (port %c, bit %u)",
+	       pPinStr, Event, pin.bIsPortA ? 'A' : 'B', pin.nBit);
 }
 
 bool CUserInterface::Initialize()
@@ -120,19 +168,75 @@ bool CUserInterface::Initialize()
 		}
 
 		LOGDBG("MCP23017 initialized at 0x%02X", m_pConfig->GetMCPAddress());
+
+		// --- Parse button bindings from config ---
+		// Navigation buttons
+		AddMCPButtonBinding(m_pConfig->GetPropertyString("ButtonPinPrev", "0"),
+				    CUIMenu::MenuEventStepDown);
+		AddMCPButtonBinding(m_pConfig->GetPropertyString("ButtonPinNext", "0"),
+				    CUIMenu::MenuEventStepUp);
+		AddMCPButtonBinding(m_pConfig->GetPropertyString("ButtonPinBack", "0"),
+				    CUIMenu::MenuEventBack);
+		AddMCPButtonBinding(m_pConfig->GetPropertyString("ButtonPinSelect", "0"),
+				    CUIMenu::MenuEventSelect);
+		AddMCPButtonBinding(m_pConfig->GetPropertyString("ButtonPinHome", "0"),
+				    CUIMenu::MenuEventHome);
+
+		// Program/Bank/TG buttons
+		AddMCPButtonBinding(m_pConfig->GetPropertyString("ButtonPinPgmUp", "0"),
+				    CUIMenu::MenuEventPgmUp);
+		AddMCPButtonBinding(m_pConfig->GetPropertyString("ButtonPinPgmDown", "0"),
+				    CUIMenu::MenuEventPgmDown);
+		AddMCPButtonBinding(m_pConfig->GetPropertyString("ButtonPinBankUp", "0"),
+				    CUIMenu::MenuEventBankUp);
+		AddMCPButtonBinding(m_pConfig->GetPropertyString("ButtonPinBankDown", "0"),
+				    CUIMenu::MenuEventBankDown);
+		AddMCPButtonBinding(m_pConfig->GetPropertyString("ButtonPinTGUp", "0"),
+				    CUIMenu::MenuEventTGUp);
+		AddMCPButtonBinding(m_pConfig->GetPropertyString("ButtonPinTGDown", "0"),
+				    CUIMenu::MenuEventTGDown);
+
+		// Encoder shortcut/click button
+		AddMCPButtonBinding(m_pConfig->GetPropertyString("ButtonPinShortcut", "0"),
+				    CUIMenu::MenuEventSelect);
+
+		LOGDBG("MCP buttons configured: %u bindings", m_nMCPButtonCount);
+
+		// --- Parse encoder bindings from config ---
+		if (m_pConfig->GetEncoderEnabled())
+		{
+			const char *pClockStr = m_pConfig->GetPropertyString("EncoderPinClock", "0");
+			const char *pDataStr = m_pConfig->GetPropertyString("EncoderPinData", "0");
+
+			TMCPPin clockPin = ParseMCPPin(pClockStr);
+			TMCPPin dataPin = ParseMCPPin(pDataStr);
+
+			if (clockPin.bValid && dataPin.bValid && m_nMCPEncoderCount < MAX_MCP_ENCODERS)
+			{
+				m_MCPEncoders[m_nMCPEncoderCount].bClockIsPortA = clockPin.bIsPortA;
+				m_MCPEncoders[m_nMCPEncoderCount].nClockBit = clockPin.nBit;
+				m_MCPEncoders[m_nMCPEncoderCount].bDataIsPortA = dataPin.bIsPortA;
+				m_MCPEncoders[m_nMCPEncoderCount].nDataBit = dataPin.nBit;
+				m_MCPEncoders[m_nMCPEncoderCount].nLastState = 0x03; // both HIGH (pull-up)
+				m_MCPEncoders[m_nMCPEncoderCount].nAccumulator = 0;
+				m_nMCPEncoderCount++;
+
+				LOGDBG("MCP encoder: clock=%s data=%s", pClockStr, pDataStr);
+			}
+		}
+
+		LOGDBG("MCP encoders configured: %u bindings", m_nMCPEncoderCount);
 	}
 
 	// SSD1309 OLED hardware reset (Option B: use CSSD1309Display for reset only)
 	unsigned nOLEDResetPin = m_pConfig->GetOLEDResetGPIO();
 	if (nOLEDResetPin != 0)
 	{
-		// Create SSD1309Display just for hardware reset
 		m_pSSD1309 = new CSSD1309Display(m_pI2CMaster,
 						 nOLEDResetPin,
 						 m_pConfig->GetSSD1306LCDI2CAddress());
 		assert(m_pSSD1309);
 
-		// Initialize performs hardware reset and SSD1309-specific init sequence
 		if (!m_pSSD1309->Initialize())
 		{
 			LOGDBG("SSD1309 hardware reset/init failed, continuing with SSD1306 driver");
@@ -334,8 +438,8 @@ void CUserInterface::PollMCP()
 	assert(m_pMCP);
 
 	// Read both MCP23017 ports
-	uint8_t nPortA = m_pMCP->ReadPortA(); // buttons + encoder clicks
-	uint8_t nPortB = m_pMCP->ReadPortB(); // encoder rotation
+	uint8_t nPortA = m_pMCP->ReadPortA();
+	uint8_t nPortB = m_pMCP->ReadPortB();
 
 	unsigned nPulsePerStep = m_pConfig->GetEncoderPulsePerStep();
 	if (nPulsePerStep == 0)
@@ -343,27 +447,26 @@ void CUserInterface::PollMCP()
 		nPulsePerStep = 1;
 	}
 
-	// --- Decode 4 encoders from Port B ---
-	// Per GPIO_PINOUT.md, channels are swapped (B read as A, A read as B):
-	// Encoder 1 (top):    GPB0=ChB, GPB1=ChA
-	// Encoder 2:          GPB2=ChB, GPB3=ChA
-	// Encoder 3:          GPB4=ChB, GPB5=ChA
-	// Encoder 4 (bottom): GPB6=ChB, GPB7=ChA
-	for (unsigned enc = 0; enc < NUM_ENCODERS; enc++)
+	// --- Decode configured encoders ---
+	for (unsigned enc = 0; enc < m_nMCPEncoderCount; enc++)
 	{
-		// Extract the 2 bits for this encoder (swapped: bit0=B, bit1=A)
-		unsigned nBitOffset = enc * 2;
-		uint8_t nRawB = (nPortB >> nBitOffset) & 0x01;     // Channel B
-		uint8_t nRawA = (nPortB >> (nBitOffset + 1)) & 0x01; // Channel A
+		TMCPEncoderBinding &binding = m_MCPEncoders[enc];
 
-		// Current state: A in bit1, B in bit0
-		uint8_t nCurrentState = (nRawA << 1) | nRawB;
-		uint8_t nPrevState = m_nLastEncoderState[enc];
+		// Read clock and data pins from their respective ports
+		uint8_t nClockPort = binding.bClockIsPortA ? nPortA : nPortB;
+		uint8_t nDataPort = binding.bDataIsPortA ? nPortA : nPortB;
+
+		uint8_t nRawClock = (nClockPort >> binding.nClockBit) & 0x01;
+		uint8_t nRawData = (nDataPort >> binding.nDataBit) & 0x01;
+
+		// Current state: Data in bit1, Clock in bit0
+		uint8_t nCurrentState = (nRawData << 1) | nRawClock;
+		uint8_t nPrevState = binding.nLastState;
 
 		if (nCurrentState != nPrevState)
 		{
 			// Quadrature state table for direction detection
-			// State transitions: 00->01->11->10 = CW, 00->10->11->01 = CCW
+			// State transitions: 00→01→11→10 = CW, 00→10→11→01 = CCW
 			static const int8_t quadTable[16] = {
 				 0, -1,  1,  0,
 				 1,  0,  0, -1,
@@ -372,72 +475,39 @@ void CUserInterface::PollMCP()
 			};
 
 			int8_t nDirection = quadTable[(nPrevState << 2) | nCurrentState];
-			m_nEncoderAccumulator[enc] += nDirection;
+			binding.nAccumulator += nDirection;
 
 			// Only emit event when accumulator reaches threshold
-			if (m_nEncoderAccumulator[enc] >= (int)nPulsePerStep)
+			if (binding.nAccumulator >= (int)nPulsePerStep)
 			{
-				m_nEncoderAccumulator[enc] = 0;
-				// Encoder 0 is the main encoder for menu navigation
+				binding.nAccumulator = 0;
 				m_Menu.EventHandler(CUIMenu::MenuEventStepUp);
 			}
-			else if (m_nEncoderAccumulator[enc] <= -(int)nPulsePerStep)
+			else if (binding.nAccumulator <= -(int)nPulsePerStep)
 			{
-				m_nEncoderAccumulator[enc] = 0;
+				binding.nAccumulator = 0;
 				m_Menu.EventHandler(CUIMenu::MenuEventStepDown);
 			}
 
-			m_nLastEncoderState[enc] = nCurrentState;
+			binding.nLastState = nCurrentState;
 		}
 	}
 
-	// --- Decode Port A buttons (active-low, active = 0) ---
-	// Only process on state change (simple debounce)
-	if (nPortA != m_nLastPortA)
+	// --- Check configured buttons (active-low, falling edge) ---
+	uint8_t nPressedA = m_nLastPortA & ~nPortA;  // bits that went HIGH→LOW
+	uint8_t nPressedB = m_nLastPortB & ~nPortB;
+
+	for (unsigned btn = 0; btn < m_nMCPButtonCount; btn++)
 	{
-		// Detect falling edges (button press: was HIGH, now LOW)
-		uint8_t nPressed = m_nLastPortA & ~nPortA;
-
-		// Encoder clicks (GPA0-GPA3, reverse order per pinout)
-		// GPA3 = Encoder 1 click (top), GPA0 = Encoder 4 click (bottom)
-		if (nPressed & (1 << 3)) // GPA3 = Encoder 1 click
+		uint8_t nPressed = m_MCPButtons[btn].bIsPortA ? nPressedA : nPressedB;
+		if (nPressed & (1 << m_MCPButtons[btn].nBit))
 		{
-			m_Menu.EventHandler(CUIMenu::MenuEventSelect);
+			m_Menu.EventHandler(m_MCPButtons[btn].Event);
 		}
-		if (nPressed & (1 << 2)) // GPA2 = Encoder 2 click
-		{
-			m_Menu.EventHandler(CUIMenu::MenuEventSelect);
-		}
-		if (nPressed & (1 << 1)) // GPA1 = Encoder 3 click
-		{
-			m_Menu.EventHandler(CUIMenu::MenuEventSelect);
-		}
-		if (nPressed & (1 << 0)) // GPA0 = Encoder 4 click
-		{
-			m_Menu.EventHandler(CUIMenu::MenuEventSelect);
-		}
-
-		// Nav buttons (GPA4-GPA7, reverse order per pinout)
-		// GPA7 = Main (top), GPA6 = Voice, GPA5 = FX, GPA4 = Mix (bottom)
-		if (nPressed & (1 << 7)) // GPA7 = Main page
-		{
-			m_Menu.EventHandler(CUIMenu::MenuEventHome);
-		}
-		if (nPressed & (1 << 6)) // GPA6 = Voice page
-		{
-			m_Menu.EventHandler(CUIMenu::MenuEventBack);
-		}
-		if (nPressed & (1 << 5)) // GPA5 = FX page
-		{
-			m_Menu.EventHandler(CUIMenu::MenuEventPgmUp);
-		}
-		if (nPressed & (1 << 4)) // GPA4 = Mix page
-		{
-			m_Menu.EventHandler(CUIMenu::MenuEventPgmDown);
-		}
-
-		m_nLastPortA = nPortA;
 	}
+
+	m_nLastPortA = nPortA;
+	m_nLastPortB = nPortB;
 }
 
 void CUserInterface::ParameterChanged()

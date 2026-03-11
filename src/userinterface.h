@@ -42,6 +42,33 @@
 
 class CMiniDexed;
 
+// MCP23017 pin descriptor
+struct TMCPPin
+{
+	bool bValid;    // successfully parsed
+	bool bIsPortA;  // true = Port A, false = Port B
+	unsigned nBit;  // 0-7
+};
+
+// MCP23017 button → menu event binding
+struct TMCPButtonBinding
+{
+	bool bIsPortA;
+	unsigned nBit;
+	CUIMenu::TMenuEvent Event;
+};
+
+// MCP23017 encoder binding (clock + data pins)
+struct TMCPEncoderBinding
+{
+	bool bClockIsPortA;
+	unsigned nClockBit;
+	bool bDataIsPortA;
+	unsigned nDataBit;
+	uint8_t nLastState;    // last A/B quadrature state
+	int nAccumulator;      // step accumulator
+};
+
 class CUserInterface
 {
 public:
@@ -77,7 +104,9 @@ private:
 	static void UIButtonsEventStub(CUIButton::BtnEvent Event, void *pParam);
 	void UISetMIDIButtonChannel(int nCh);
 
-	// MCP23017 polling
+	// MCP23017 helpers
+	static TMCPPin ParseMCPPin(const char *pStr);
+	void AddMCPButtonBinding(const char *pPinStr, CUIMenu::TMenuEvent Event);
 	void PollMCP();
 
 private:
@@ -106,14 +135,19 @@ private:
 	CMCP23017 *m_pMCP;
 	bool m_bUseMCP;
 
-	// MCP23017 encoder state (4 encoders)
-	static const unsigned NUM_ENCODERS = 4;
-	uint8_t m_nLastEncoderState[NUM_ENCODERS]; // last A/B quadrature state per encoder
-	int m_nEncoderAccumulator[NUM_ENCODERS];   // step accumulator per encoder
+	// MCP23017 config-driven button bindings
+	static const unsigned MAX_MCP_BUTTONS = 16;
+	TMCPButtonBinding m_MCPButtons[MAX_MCP_BUTTONS];
+	unsigned m_nMCPButtonCount;
 
-	// MCP23017 button state (Port A: 4 encoder clicks + 4 nav buttons)
-	uint8_t m_nLastPortA;      // last Port A reading for debounce
-	unsigned m_nDebounceTimer; // simple debounce counter
+	// MCP23017 config-driven encoder bindings
+	static const unsigned MAX_MCP_ENCODERS = 4;
+	TMCPEncoderBinding m_MCPEncoders[MAX_MCP_ENCODERS];
+	unsigned m_nMCPEncoderCount;
+
+	// MCP23017 port state tracking
+	uint8_t m_nLastPortA;
+	uint8_t m_nLastPortB;
 
 	CUIMenu m_Menu;
 };
