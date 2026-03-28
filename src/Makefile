@@ -16,7 +16,18 @@ OBJS = main.o kernel.o minidexed.o config.o userinterface.o uimenu.o uitostring.
        zyn/CombFilterBank.o zyn/Sympathetic.o \
        butter.o \
        arm/arm_float_to_q23.o arm/arm_zip_f32.o arm/arm_scale_zip_f32.o \
-       net/ftpdaemon.o net/ftpworker.o net/applemidi.o net/udpmidi.o net/mdnspublisher.o udpmididevice.o
+       net/ftpdaemon.o net/ftpworker.o net/applemidi.o net/udpmidi.o net/mdnspublisher.o udpmididevice.o \
+       u8g2_hal_circle.o \
+       u8g2/u8g2_d_setup.o u8g2/u8g2_d_memory.o u8g2/u8g2_font_dreamdexed.o \
+       u8g2/u8g2_intersection.o u8g2/u8g2_setup.o u8g2/u8g2_buffer.o \
+       u8g2/u8g2_ll_hvline.o u8g2/u8g2_hvline.o \
+       u8g2/u8g2_circle.o u8g2/u8g2_box.o u8g2/u8g2_bitmap.o \
+       u8g2/u8g2_font.o \
+       u8g2/u8x8_setup.o u8g2/u8x8_display.o u8g2/u8x8_cad.o \
+       u8g2/u8x8_byte.o u8g2/u8x8_gpio.o u8g2/u8x8_8x8.o \
+       u8g2/u8x8_d_ssd1306_128x64_noname.o \
+       u8g2/u8g2_stubs.o \
+       ui4row.o
 
 EXTRACLEAN = $(OBJS) $(OBJS:.o=.d)
 

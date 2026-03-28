@@ -72,10 +72,14 @@ m_nMCPButtonCount{0},
 m_nMCPEncoderCount{0},
 m_nLastPortA{0xFF},
 m_nLastPortB{0xFF},
-m_Menu{this, pMiniDexed, pConfig}
+m_Menu{this, pMiniDexed, pConfig},
+m_pUI4Row{nullptr},
+m_bUse4RowUI{false},
+m_nMCPEncoderClickCount{0}
 {
 	memset(m_MCPButtons, 0, sizeof(m_MCPButtons));
 	memset(m_MCPEncoders, 0, sizeof(m_MCPEncoders));
+	memset(m_MCPEncoderClicks, 0, sizeof(m_MCPEncoderClicks));
 }
 
 CUserInterface::~CUserInterface()
@@ -86,6 +90,7 @@ CUserInterface::~CUserInterface()
 	delete m_pLCD;
 	delete m_pMCP;
 	delete m_pSSD1309;
+	delete m_pUI4Row;
 }
 
 // Parse MCP pin string like "GPA0", "GPB7" → {valid, isPortA, bit}
@@ -143,6 +148,9 @@ bool CUserInterface::Initialize()
 
 	// Check if MCP23017 is the input device
 	m_bUseMCP = (strcmp(m_pConfig->GetUIInputDevice(), "mcp23017") == 0);
+
+	// Check if 4-Row UI mode is selected
+	m_bUse4RowUI = m_pConfig->Is4RowUI();
 
 	if (m_bUseMCP)
 	{
@@ -203,7 +211,8 @@ bool CUserInterface::Initialize()
 		LOGDBG("MCP buttons configured: %u bindings", m_nMCPButtonCount);
 
 		// --- Parse encoder bindings from config ---
-		if (m_pConfig->GetEncoderEnabled())
+		// In 4-row mode, skip the classic encoder — register 4 separate encoders below
+		if (m_pConfig->GetEncoderEnabled() && !m_bUse4RowUI)
 		{
 			const char *pClockStr = m_pConfig->GetPropertyString("EncoderPinClock", "0");
 			const char *pDataStr = m_pConfig->GetPropertyString("EncoderPinData", "0");
@@ -226,6 +235,72 @@ bool CUserInterface::Initialize()
 		}
 
 		LOGDBG("MCP encoders configured: %u bindings", m_nMCPEncoderCount);
+
+		// If 4-row mode, set up dedicated encoder and button bindings
+		if (m_bUse4RowUI)
+		{
+			// 4-Row encoder rotation bindings (4 encoders)
+			const char *encPinNames[][2] = {
+				{"4RowEnc1ClkPin", "4RowEnc1DataPin"},
+				{"4RowEnc2ClkPin", "4RowEnc2DataPin"},
+				{"4RowEnc3ClkPin", "4RowEnc3DataPin"},
+				{"4RowEnc4ClkPin", "4RowEnc4DataPin"},
+			};
+
+			for (unsigned i = 0; i < 4; i++)
+			{
+				const char *pClk = m_pConfig->GetPropertyString(encPinNames[i][0], "0");
+				const char *pDat = m_pConfig->GetPropertyString(encPinNames[i][1], "0");
+
+				TMCPPin clockPin = ParseMCPPin(pClk);
+				TMCPPin dataPin = ParseMCPPin(pDat);
+
+				if (clockPin.bValid && dataPin.bValid && m_nMCPEncoderCount < MAX_MCP_ENCODERS)
+				{
+					m_MCPEncoders[m_nMCPEncoderCount].bClockIsPortA = clockPin.bIsPortA;
+					m_MCPEncoders[m_nMCPEncoderCount].nClockBit = clockPin.nBit;
+					m_MCPEncoders[m_nMCPEncoderCount].bDataIsPortA = dataPin.bIsPortA;
+					m_MCPEncoders[m_nMCPEncoderCount].nDataBit = dataPin.nBit;
+					m_MCPEncoders[m_nMCPEncoderCount].nLastState = 0x03;
+					m_MCPEncoders[m_nMCPEncoderCount].nAccumulator = 0;
+					m_nMCPEncoderCount++;
+
+					LOGDBG("4-Row encoder %u: clock=%s data=%s", i, pClk, pDat);
+				}
+			}
+
+			// 4-Row navigation buttons
+			AddMCPButtonBinding(m_pConfig->GetPropertyString("4RowBtnBackPin", "0"),
+					    CUIMenu::MenuEventBack);
+			AddMCPButtonBinding(m_pConfig->GetPropertyString("4RowBtnUpPin", "0"),
+					    CUIMenu::MenuEventStepUp);
+			AddMCPButtonBinding(m_pConfig->GetPropertyString("4RowBtnDownPin", "0"),
+					    CUIMenu::MenuEventStepDown);
+			AddMCPButtonBinding(m_pConfig->GetPropertyString("4RowBtnHomePin", "0"),
+					    CUIMenu::MenuEventHome);
+
+			// 4-Row encoder click buttons
+			const char *encClickPins[] = {
+				"4RowEncClk1Pin", "4RowEncClk2Pin",
+				"4RowEncClk3Pin", "4RowEncClk4Pin"
+			};
+			for (unsigned i = 0; i < 4; i++)
+			{
+				const char *pPin = m_pConfig->GetPropertyString(encClickPins[i], "0");
+				TMCPPin pin = ParseMCPPin(pPin);
+				if (pin.bValid && m_nMCPEncoderClickCount < MAX_ENCODER_CLICKS)
+				{
+					m_MCPEncoderClicks[m_nMCPEncoderClickCount].bIsPortA = pin.bIsPortA;
+					m_MCPEncoderClicks[m_nMCPEncoderClickCount].nBit = pin.nBit;
+					m_MCPEncoderClicks[m_nMCPEncoderClickCount].nEncoderIndex = i;
+					m_nMCPEncoderClickCount++;
+					LOGDBG("4-Row encoder click %u: pin=%s", i, pPin);
+				}
+			}
+
+			LOGDBG("4-Row UI: %u encoders, %u buttons, %u encoder clicks",
+			       m_nMCPEncoderCount, m_nMCPButtonCount, m_nMCPEncoderClickCount);
+		}
 	}
 
 	// SSD1309 OLED hardware reset (Option B: use CSSD1309Display for reset only)
@@ -403,6 +478,14 @@ bool CUserInterface::Initialize()
 
 	m_Menu.EventHandler(CUIMenu::MenuEventUpdate);
 
+	// Initialize 4-Row UI engine if in 4-row mode
+	if (m_bUse4RowUI)
+	{
+		m_pUI4Row = new CUI4Row(this, m_pMiniDexed, m_pConfig);
+		assert(m_pUI4Row);
+		LOGDBG("4-Row UI engine initialized");
+	}
+
 	return true;
 }
 
@@ -430,6 +513,12 @@ void CUserInterface::Process()
 	if (m_bUseMCP && m_pMCP)
 	{
 		PollMCP();
+	}
+
+	// 4-Row UI rendering
+	if (m_bUse4RowUI && m_pUI4Row && m_pSSD1306)
+	{
+		m_pUI4Row->Render(m_pSSD1306);
 	}
 }
 
@@ -481,12 +570,26 @@ void CUserInterface::PollMCP()
 			if (binding.nAccumulator >= (int)nPulsePerStep)
 			{
 				binding.nAccumulator = 0;
-				m_Menu.EventHandler(CUIMenu::MenuEventStepUp);
+				if (m_bUse4RowUI && m_pUI4Row)
+				{
+					m_pUI4Row->OnEncoderRotate(enc, 1);
+				}
+				else
+				{
+					m_Menu.EventHandler(CUIMenu::MenuEventStepUp);
+				}
 			}
 			else if (binding.nAccumulator <= -(int)nPulsePerStep)
 			{
 				binding.nAccumulator = 0;
-				m_Menu.EventHandler(CUIMenu::MenuEventStepDown);
+				if (m_bUse4RowUI && m_pUI4Row)
+				{
+					m_pUI4Row->OnEncoderRotate(enc, -1);
+				}
+				else
+				{
+					m_Menu.EventHandler(CUIMenu::MenuEventStepDown);
+				}
 			}
 
 			binding.nLastState = nCurrentState;
@@ -502,7 +605,97 @@ void CUserInterface::PollMCP()
 		uint8_t nPressed = m_MCPButtons[btn].bIsPortA ? nPressedA : nPressedB;
 		if (nPressed & (1 << m_MCPButtons[btn].nBit))
 		{
-			m_Menu.EventHandler(m_MCPButtons[btn].Event);
+			if (m_bUse4RowUI && m_pUI4Row)
+			{
+				// Route to 4-row UI
+				switch (m_MCPButtons[btn].Event)
+				{
+				case CUIMenu::MenuEventBack:
+					m_pUI4Row->OnBack();
+					break;
+				case CUIMenu::MenuEventStepUp:
+					m_pUI4Row->OnScrollUp();
+					break;
+				case CUIMenu::MenuEventStepDown:
+					m_pUI4Row->OnScrollDown();
+					break;
+				default:
+					break;
+				}
+			}
+			else
+			{
+				m_Menu.EventHandler(m_MCPButtons[btn].Event);
+			}
+		}
+	}
+	// --- Check 4-row encoder clicks (active-low, falling edge) ---
+	if (m_bUse4RowUI && m_pUI4Row)
+	{
+		for (unsigned clk = 0; clk < m_nMCPEncoderClickCount; clk++)
+		{
+			uint8_t nPressed = m_MCPEncoderClicks[clk].bIsPortA ? nPressedA : nPressedB;
+			if (nPressed & (1 << m_MCPEncoderClicks[clk].nBit))
+			{
+				m_pUI4Row->OnEncoderClick(m_MCPEncoderClicks[clk].nEncoderIndex);
+			}
+		}
+	}
+
+	// --- Auto-repeat for held Up/Down buttons (4-row mode) ---
+	if (m_bUse4RowUI && m_pUI4Row)
+	{
+		static unsigned s_nHeldBtn = ~0u;       // index of held button (~0 = none)
+		static unsigned s_nHeldStart = 0;       // tick when first held
+		static unsigned s_nLastRepeat = 0;      // tick of last repeat event
+		static const unsigned REPEAT_DELAY_US  = 400000;  // 400ms before repeats start
+		static const unsigned REPEAT_RATE_US   = 120000;  // 120ms between repeats
+
+		bool bAnyHeld = false;
+		for (unsigned btn = 0; btn < m_nMCPButtonCount; btn++)
+		{
+			// Only auto-repeat Up and Down
+			if (m_MCPButtons[btn].Event != CUIMenu::MenuEventStepUp &&
+			    m_MCPButtons[btn].Event != CUIMenu::MenuEventStepDown)
+			{
+				continue;
+			}
+
+			uint8_t nPort = m_MCPButtons[btn].bIsPortA ? nPortA : nPortB;
+			bool bHeld = !(nPort & (1 << m_MCPButtons[btn].nBit)); // active-low
+
+			if (bHeld)
+			{
+				bAnyHeld = true;
+				unsigned nNow = CTimer::Get()->GetClockTicks();
+
+				if (s_nHeldBtn != btn)
+				{
+					// New button held — start repeat timer
+					s_nHeldBtn = btn;
+					s_nHeldStart = nNow;
+					s_nLastRepeat = nNow;
+				}
+				else if (nNow - s_nHeldStart >= REPEAT_DELAY_US &&
+				         nNow - s_nLastRepeat >= REPEAT_RATE_US)
+				{
+					// Fire repeat event
+					s_nLastRepeat = nNow;
+					if (m_MCPButtons[btn].Event == CUIMenu::MenuEventStepUp)
+					{
+						m_pUI4Row->OnScrollUp();
+					}
+					else
+					{
+						m_pUI4Row->OnScrollDown();
+					}
+				}
+				break; // only one button can be held at a time
+			}
+		}
+		if (!bAnyHeld)
+		{
+			s_nHeldBtn = ~0u;
 		}
 	}
 
@@ -526,6 +719,12 @@ void CUserInterface::DisplayWrite(const char *pMenu, const char *pParam, const c
 	assert(pMenu);
 	assert(pParam);
 	assert(pValue);
+
+	// In 4-row mode, skip classic display writing — CUI4Row handles rendering
+	if (m_bUse4RowUI)
+	{
+		return;
+	}
 
 	size_t nLineMaxLen = static_cast<size_t>(m_pConfig->GetLCDColumns());
 

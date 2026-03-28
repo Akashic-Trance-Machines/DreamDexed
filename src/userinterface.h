@@ -39,6 +39,7 @@
 #include "config.h"
 #include "uibuttons.h"
 #include "uimenu.h"
+#include "ui4row.h"
 
 class CMiniDexed;
 
@@ -67,6 +68,14 @@ struct TMCPEncoderBinding
 	unsigned nDataBit;
 	uint8_t nLastState;    // last A/B quadrature state
 	int nAccumulator;      // step accumulator
+};
+
+// MCP23017 encoder click binding (for 4-row mode)
+struct TMCPEncoderClickBinding
+{
+	bool bIsPortA;
+	unsigned nBit;
+	unsigned nEncoderIndex; // 0-3 maps to row 1-4
 };
 
 class CUserInterface
@@ -150,4 +159,13 @@ private:
 	uint8_t m_nLastPortB;
 
 	CUIMenu m_Menu;
+
+	// 4-Row hierarchical UI (alternative mode)
+	CUI4Row *m_pUI4Row;
+	bool m_bUse4RowUI;
+
+	// 4-Row encoder click bindings (MCP pin → encoder index)
+	static const unsigned MAX_ENCODER_CLICKS = 4;
+	TMCPEncoderClickBinding m_MCPEncoderClicks[MAX_ENCODER_CLICKS];
+	unsigned m_nMCPEncoderClickCount;
 };

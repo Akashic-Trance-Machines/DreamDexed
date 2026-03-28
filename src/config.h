@@ -269,6 +269,10 @@ public:
 	unsigned GetOLEDResetGPIO() const;
 	unsigned GetEncoderPulsePerStep() const;
 
+	// 4-Row UI Mode
+	const char *GetUIMode() const;
+	bool Is4RowUI() const;
+
 	// Generic property string access (for MCP pin name parsing)
 	const char *GetPropertyString(const char *pName, const char *pDefault = "") const;
 
@@ -434,6 +438,9 @@ private:
 	unsigned m_nMCPBInterruptGPIO;
 	unsigned m_nMCPResetGPIO;
 	unsigned m_nOLEDResetGPIO;
+
+	// 4-Row UI mode config
+	std::string m_UIMode;
 	unsigned m_nEncoderPulsePerStep;
 
 	bool m_bMIDIDumpEnabled;

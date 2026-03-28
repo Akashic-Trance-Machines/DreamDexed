@@ -276,6 +276,9 @@ void CConfig::Load()
 	m_nOLEDResetGPIO = m_Properties.GetNumber("OLEDResetGPIO", 23);
 	m_nEncoderPulsePerStep = m_Properties.GetNumber("EncoderPulsePerStep", 2);
 
+	// 4-Row UI Mode
+	m_UIMode = m_Properties.GetString("UIMode", "classic");
+
 	m_bMIDIDumpEnabled = m_Properties.GetNumber("MIDIDumpEnabled", 0) != 0;
 	m_bProfileEnabled = m_Properties.GetNumber("ProfileEnabled", 0) != 0;
 	m_bLogThrottling = m_Properties.GetNumber("LogThrottling", 0);
@@ -923,6 +926,16 @@ unsigned CConfig::GetOLEDResetGPIO() const
 unsigned CConfig::GetEncoderPulsePerStep() const
 {
 	return m_nEncoderPulsePerStep;
+}
+
+const char *CConfig::GetUIMode() const
+{
+	return m_UIMode.c_str();
+}
+
+bool CConfig::Is4RowUI() const
+{
+	return m_UIMode == "4row";
 }
 
 const char *CConfig::GetPropertyString(const char *pName, const char *pDefault) const
