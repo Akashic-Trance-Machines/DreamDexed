@@ -13,7 +13,7 @@ provides a complete user interface for embedded synthesizers:
 
 - **128×64 OLED display** (SSD1309/SSD1306 compatible, I2C)
 - **4 rotary encoders** with push-click (quadrature, I2C via MCP23017)
-- **4 navigation buttons** (I2C via MCP23017)
+- **3 navigation inputs** (Back, Up, Down — via buttons or nav encoder)
 - **I2S audio output** (to external DAC)
 - **MIDI input** (UART, 31250 baud)
 
@@ -23,23 +23,44 @@ MCP23017 I/O expander.
 
 ### Physical Layout
 
+Two hardware configurations are supported for the left-side navigation:
+
+#### Option A: 3 Buttons
 ```
 ┌─────────────────────────────────────────────────────┐
 │                                                     │
-│   [BTN_1]  ┌──────────────────────┐  [═══ ENC_1 ═] │  ← Top
-│   [BTN_2]  │                      │  [═══ ENC_2 ═] │
-│   [BTN_3]  │   128×64 OLED        │  [═══ ENC_3 ═] │
-│   [BTN_4]  │                      │  [═══ ENC_4 ═] │  ← Bottom
-│            └──────────────────────┘                 │
+│   (empty)   ┌──────────────────────┐  [═══ ENC_1 ═] │  ← Top
+│   [BACK ]   │                      │  [═══ ENC_2 ═] │
+│   [ UP  ]   │   128×64 OLED        │  [═══ ENC_3 ═] │
+│   [DOWN ]   │                      │  [═══ ENC_4 ═] │  ← Bottom
+│             └──────────────────────┘                 │
 │                                                     │
-│   ┌──── Raspberry Pi 3 GPIO Header ────┐            │
-│   └────────────────────────────────────┘            │
+│   ┌──── Raspberry Pi 3 GPIO Header ────┐             │
+│   └────────────────────────────────────┘             │
 └─────────────────────────────────────────────────────┘
 ```
 
-- **Left side**: 4 navigation buttons (top to bottom: BTN_1 → BTN_4)
+#### Option B: Nav Encoder
+```
+┌─────────────────────────────────────────────────────┐
+│                                                     │
+│             ┌──────────────────────┐  [═══ ENC_1 ═] │  ← Top
+│  [═NAV═]    │                      │  [═══ ENC_2 ═] │
+│  click=Back │   128×64 OLED        │  [═══ ENC_3 ═] │
+│  twist=↑↓   │                      │  [═══ ENC_4 ═] │  ← Bottom
+│             └──────────────────────┘                 │
+│                                                     │
+│   ┌──── Raspberry Pi 3 GPIO Header ────┐             │
+│   └────────────────────────────────────┘             │
+└─────────────────────────────────────────────────────┘
+```
+
+- **Left side**: 3 navigation inputs — Back, Up, Down (via buttons OR encoder)
 - **Center**: OLED display
 - **Right side**: 4 rotary encoders with click (top to bottom: ENC_1 → ENC_4)
+
+> **Note**: There is **no Home button**. Pressing Back from the root menu does
+> nothing. Press Back repeatedly from any submenu to return to the root.
 
 ---
 
@@ -103,14 +124,17 @@ All buttons and encoder pins are **active-low** (pressed/active = 0, idle = 1).
 | GPA1  | 1   | Encoder 3 click    |                   |
 | GPA2  | 2   | Encoder 2 click    |                   |
 | GPA3  | 3   | Encoder 1 click    | Top encoder       |
-| GPA4  | 4   | Navigation button 4| Bottom button     |
-| GPA5  | 5   | Navigation button 3|                   |
-| GPA6  | 6   | Navigation button 2|                   |
-| GPA7  | 7   | Navigation button 1| Top button        |
+| GPA4  | 4   | Nav: Down (btn) / Nav Enc click (enc) | |
+| GPA5  | 5   | Nav: Up (btn) / Nav Enc Ch A (enc) | |
+| GPA6  | 6   | Nav: Back (btn) / Nav Enc Ch B (enc) | |
+| GPA7  | 7   | *(unused / reserved)* | |
 
 > **Important**: The physical order is **reversed** relative to bit numbers.
-> Top encoder = GPA3 (bit 3), Bottom encoder = GPA0 (bit 0).
-> Top button = GPA7 (bit 7), Bottom button = GPA4 (bit 4).
+> Top encoder click = GPA3 (bit 3), Bottom encoder click = GPA0 (bit 0).
+>
+> GPA4–GPA6 serve dual purpose depending on nav mode:
+> - **Buttons mode**: 3 discrete buttons (Back, Up, Down)
+> - **Encoder mode**: 1 nav encoder (quadrature on GPA5/GPA6, click on GPA4)
 
 ### Port B — Encoder Rotation (Quadrature Inputs)
 
@@ -188,8 +212,8 @@ a simple 50ms cooldown timer per button is sufficient.
 When a navigation button (Up/Down) is held:
 - **Initial delay**: 400ms before repeat begins
 - **Repeat interval**: 120ms between repeated events
-- Only Up and Down buttons should auto-repeat
-- Home, Back, and encoder clicks should NOT auto-repeat
+- Only Up and Down should auto-repeat
+- Back and encoder clicks should NOT auto-repeat
 
 ---
 
@@ -221,7 +245,7 @@ This minimizes I2C traffic and prevents display flicker.
 ## 8. The 4-Row UI Paradigm
 
 The 4-Row UI is the standard user interface for this hardware platform.
-It's specifically designed for the physical layout of 4 buttons + 4 encoders.
+It's specifically designed for the physical layout of 3 nav inputs + 4 encoders.
 
 ### Core Concept
 
@@ -306,16 +330,27 @@ else:
 
 ## 9. Input Mapping
 
-### Button-to-Function Assignment
+### Navigation Functions
 
-The 4 navigation buttons control menu navigation:
+Three navigation functions — **Back**, **Up**, **Down** — with two hardware modes:
 
-| Physical Button | Default Function | Description |
-|:---------------:|:----------------:|-------------|
-| BTN_1 (top, GPA7) | Home | Return to home/root menu |
-| BTN_2 (GPA6)    | Back | Go up one menu level |
-| BTN_3 (GPA5)    | Up (▲) | Scroll menu up |
-| BTN_4 (bottom, GPA4) | Down (▼) | Scroll menu down |
+#### Buttons Mode
+
+| MCP Pin | Function | Description |
+|:-------:|:--------:|-------------|
+| GPA6    | Back     | Go up one menu level |
+| GPA5    | Up (▲)   | Scroll menu up |
+| GPA4    | Down (▼) | Scroll menu down |
+
+#### Nav Encoder Mode
+
+| MCP Pin   | Function | Description |
+|:---------:|:--------:|-------------|
+| GPA4 (click) | Back  | Go up one menu level |
+| GPA5/GPA6 (twist CW)  | Down (▼) | Scroll menu down |
+| GPA5/GPA6 (twist CCW)  | Up (▲)  | Scroll menu up |
+
+> **There is no Home button.** Press Back repeatedly to return to root.
 
 ### Encoder-to-Row Mapping
 
@@ -417,8 +452,9 @@ When porting a new synthesizer project to this hardware:
 ### Input System
 - [ ] **MCP23017 polling loop** — read both ports at 1-5 kHz
 - [ ] **Quadrature decoder** — for 4 encoders with step accumulation (threshold=3)
-- [ ] **Falling-edge button detector** — for 4 nav buttons + 4 encoder clicks
-- [ ] **Auto-repeat** — for Up/Down buttons (400ms delay, 120ms interval)
+- [ ] **Falling-edge button detector** — for 3 nav buttons + 4 encoder clicks
+- [ ] **Auto-repeat** — for Up/Down (400ms delay, 120ms interval)
+- [ ] **Nav encoder mode** — optional quadrature nav with click=Back
 
 ### UI System
 - [ ] **Menu tree** — hierarchical page structure with rows
@@ -457,11 +493,19 @@ EncoderPulsePerStep=3
 # UI Mode
 UIMode=4row
 
-# Navigation Buttons (active-low on MCP23017 Port A)
-4RowBtnHomePin=GPA7
+# Navigation mode: buttons (default) or encoder
+4RowNavMode=buttons
+
+# --- Navigation: Buttons mode (3 buttons, no Home) ---
 4RowBtnBackPin=GPA6
 4RowBtnUpPin=GPA5
 4RowBtnDownPin=GPA4
+
+# --- Navigation: Encoder mode (twist=scroll, click=back) ---
+# 4RowNavMode=encoder
+# 4RowNavEncClickPin=GPA4
+# 4RowNavEncChAPin=GPA5
+# 4RowNavEncChBPin=GPA6
 
 # Encoder Click Pins (active-low on MCP23017 Port A)
 4RowEncClk1Pin=GPA3
