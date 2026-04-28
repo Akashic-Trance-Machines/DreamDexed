@@ -159,6 +159,12 @@ private:
 	static const unsigned VALUE_BUF_LEN = 22;
 	char m_szValueBuf[VALUE_BUF_COUNT][VALUE_BUF_LEN];
 
+	// Performance sync state
+	unsigned m_nSelectedPerformanceBankID;
+	unsigned m_nSelectedPerformanceID;
+	bool     m_bBankIsLoading;
+	unsigned m_nLoadingFrameCount;
+
 	// Selector state (Phase 3+)
 	unsigned m_nActiveTG;          // 0 to N-1 tone generators
 	unsigned m_nActiveOP;          // 0-5 for Operators submenu

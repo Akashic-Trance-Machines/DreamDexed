@@ -150,9 +150,12 @@ private:
 	unsigned m_nMCPButtonCount;
 
 	// MCP23017 config-driven encoder bindings
-	static const unsigned MAX_MCP_ENCODERS = 4;
+	// Slots 0-3: 4-row row encoders; slot 4 (optional): nav encoder
+	static const unsigned MAX_MCP_ENCODERS = 5;
 	TMCPEncoderBinding m_MCPEncoders[MAX_MCP_ENCODERS];
 	unsigned m_nMCPEncoderCount;
+	bool m_bNavEncoderMode;     // true = nav encoder (slot 4) instead of 3 nav buttons
+	unsigned m_nNavEncoderIndex; // index in m_MCPEncoders for the nav encoder
 
 	// MCP23017 port state tracking
 	uint8_t m_nLastPortA;

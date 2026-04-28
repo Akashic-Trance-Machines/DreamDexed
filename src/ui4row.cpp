@@ -101,6 +101,10 @@ m_bMasterMuted{false}
 	memset(m_nScrollStack, 0, sizeof(m_nScrollStack));
 	memset(&m_CurrentPage, 0, sizeof(m_CurrentPage));
 	memset(m_szValueBuf, 0, sizeof(m_szValueBuf));
+	m_nSelectedPerformanceBankID = 0;
+	m_nSelectedPerformanceID = 0;
+	m_bBankIsLoading = false;
+	m_nLoadingFrameCount = 0;
 
 	// Initialize with the Home page
 	m_nMenuStack[0] = MenuHome;
@@ -188,7 +192,9 @@ void CUI4Row::OnEncoderRotate(unsigned nEncoder, int nDirection)
 		{
 		case 0: // Bank
 		{
-			int nBank = m_pMiniDexed->GetPerformanceBank();
+			if (m_bBankIsLoading) break; // Ignore if still loading
+
+			int nBank = m_nSelectedPerformanceBankID;
 			int nLastBank = m_pMiniDexed->GetLastPerformanceBank();
 
 			if (nDirection > 0)
@@ -209,13 +215,22 @@ void CUI4Row::OnEncoderRotate(unsigned nEncoder, int nDirection)
 						nBank = nLastBank;
 				} while (!m_pMiniDexed->IsValidPerformanceBank(nBank) && nBank != nStart);
 			}
-			m_pMiniDexed->SetParameter(CMiniDexed::ParameterPerformanceBank, nBank);
-			m_pMiniDexed->SetFirstPerformance();
+			
+			if (nBank != (int)m_nSelectedPerformanceBankID)
+			{
+				m_nSelectedPerformanceBankID = nBank;
+				m_bBankIsLoading = true;
+				m_nLoadingFrameCount = 0;
+				m_pMiniDexed->SetParameter(CMiniDexed::ParameterPerformanceBank, nBank);
+				m_pMiniDexed->SetFirstPerformance();
+			}
 			break;
 		}
 		case 1: // Perf
 		{
-			int nPerf = m_pMiniDexed->GetActualPerformanceID();
+			if (m_bBankIsLoading) break; // Ignore if still loading
+
+			int nPerf = m_nSelectedPerformanceID;
 			int nLastPerf = m_pMiniDexed->GetLastPerformance();
 
 			if (nDirection > 0)
@@ -237,8 +252,9 @@ void CUI4Row::OnEncoderRotate(unsigned nEncoder, int nDirection)
 				} while (!m_pMiniDexed->IsValidPerformance(nPerf) && nPerf != nStart);
 			}
 			// Safety: only set if valid (prevents assertion in GetPerformanceName)
-			if (m_pMiniDexed->IsValidPerformance(nPerf))
+			if (m_pMiniDexed->IsValidPerformance(nPerf) && nPerf != (int)m_nSelectedPerformanceID)
 			{
+				m_nSelectedPerformanceID = nPerf;
 				m_pMiniDexed->SetNewPerformance(nPerf);
 			}
 			break;
@@ -1030,6 +1046,11 @@ void CUI4Row::OnEncoderClick(unsigned nEncoder)
 
 void CUI4Row::OnParameterChanged()
 {
+	// Sync the performance selection state with the engine when background loading finishes
+	m_nSelectedPerformanceBankID = m_pMiniDexed->GetPerformanceBank();
+	m_nSelectedPerformanceID = m_pMiniDexed->GetActualPerformanceID();
+	m_bBankIsLoading = false; // Loading finished
+
 	// Rebuild current page to reflect external changes
 	BuildCurrentPage();
 	m_bDirty = true;
@@ -1160,7 +1181,7 @@ void CUI4Row::BuildPerformancePage()
 
 	// Row 0: Bank
 	{
-		int nBank = m_pMiniDexed->GetPerformanceBank();
+		int nBank = m_nSelectedPerformanceBankID;
 		std::string bankName = m_pMiniDexed->GetPerformanceConfig()->GetPerformanceBankName(nBank);
 		snprintf(m_szValueBuf[0], VALUE_BUF_LEN, "%s", bankName.c_str());
 
@@ -1172,16 +1193,29 @@ void CUI4Row::BuildPerformancePage()
 
 	// Row 1: Perf
 	{
-		int nPerfID = m_pMiniDexed->GetActualPerformanceID();
-		// Safety: guard against race condition during bank switch
-		if (m_pMiniDexed->IsValidPerformance(nPerfID))
+		if (m_bBankIsLoading)
 		{
-			std::string perfName = m_pMiniDexed->GetPerformanceName(nPerfID);
-			snprintf(m_szValueBuf[1], VALUE_BUF_LEN, "%s", perfName.c_str());
+			// Simple 4-frame loading animation
+			unsigned frame = (m_nLoadingFrameCount++ / 2) % 4;
+			const char* frames[] = { "Loading   ", "Loading.  ", "Loading.. ", "Loading..." };
+			snprintf(m_szValueBuf[1], VALUE_BUF_LEN, "%s", frames[frame]);
+			
+			// Force continuous redraw while loading
+			m_bDirty = true; 
 		}
 		else
 		{
-			snprintf(m_szValueBuf[1], VALUE_BUF_LEN, "%03d-...", nPerfID + 1);
+			int nPerfID = m_nSelectedPerformanceID;
+			// Safety: guard against race condition
+			if (m_pMiniDexed->IsValidPerformance(nPerfID))
+			{
+				std::string perfName = m_pMiniDexed->GetPerformanceName(nPerfID);
+				snprintf(m_szValueBuf[1], VALUE_BUF_LEN, "%s", perfName.c_str());
+			}
+			else
+			{
+				snprintf(m_szValueBuf[1], VALUE_BUF_LEN, "%03d-...", nPerfID + 1);
+			}
 		}
 
 		m_CurrentPage.Rows[1].Type = RowTypeProperty;

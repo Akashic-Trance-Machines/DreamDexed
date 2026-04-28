@@ -75,7 +75,9 @@ m_nLastPortB{0xFF},
 m_Menu{this, pMiniDexed, pConfig},
 m_pUI4Row{nullptr},
 m_bUse4RowUI{false},
-m_nMCPEncoderClickCount{0}
+m_nMCPEncoderClickCount{0},
+m_bNavEncoderMode{false},
+m_nNavEncoderIndex{0}
 {
 	memset(m_MCPButtons, 0, sizeof(m_MCPButtons));
 	memset(m_MCPEncoders, 0, sizeof(m_MCPEncoders));
@@ -269,13 +271,49 @@ bool CUserInterface::Initialize()
 				}
 			}
 
-			// 4-Row navigation buttons
-			AddMCPButtonBinding(m_pConfig->GetPropertyString("4RowBtnBackPin", "0"),
-					    CUIMenu::MenuEventBack);
-			AddMCPButtonBinding(m_pConfig->GetPropertyString("4RowBtnUpPin", "0"),
-					    CUIMenu::MenuEventStepUp);
-			AddMCPButtonBinding(m_pConfig->GetPropertyString("4RowBtnDownPin", "0"),
-					    CUIMenu::MenuEventStepDown);
+			// 4-Row navigation: buttons or encoder
+			const char *pNavMode = m_pConfig->GetPropertyString("4RowNavMode", "buttons");
+			if (strcmp(pNavMode, "encoder") == 0)
+			{
+				// Nav encoder mode: one quadrature encoder (twist) + click pin (back)
+				m_bNavEncoderMode = true;
+
+				const char *pChA = m_pConfig->GetPropertyString("4RowNavEncChAPin", "0");
+				const char *pChB = m_pConfig->GetPropertyString("4RowNavEncChBPin", "0");
+				const char *pClk = m_pConfig->GetPropertyString("4RowNavEncClickPin", "0");
+
+				TMCPPin chAPin = ParseMCPPin(pChA);
+				TMCPPin chBPin = ParseMCPPin(pChB);
+
+				if (chAPin.bValid && chBPin.bValid && m_nMCPEncoderCount < MAX_MCP_ENCODERS)
+				{
+					m_nNavEncoderIndex = m_nMCPEncoderCount;
+					m_MCPEncoders[m_nMCPEncoderCount].bClockIsPortA = chAPin.bIsPortA;
+					m_MCPEncoders[m_nMCPEncoderCount].nClockBit     = chAPin.nBit;
+					m_MCPEncoders[m_nMCPEncoderCount].bDataIsPortA  = chBPin.bIsPortA;
+					m_MCPEncoders[m_nMCPEncoderCount].nDataBit      = chBPin.nBit;
+					m_MCPEncoders[m_nMCPEncoderCount].nLastState    = 0x03;
+					m_MCPEncoders[m_nMCPEncoderCount].nAccumulator  = 0;
+					m_nMCPEncoderCount++;
+					LOGDBG("4-Row nav encoder: chA=%s chB=%s", pChA, pChB);
+				}
+
+				// Nav encoder click → Back
+				AddMCPButtonBinding(pClk, CUIMenu::MenuEventBack);
+				LOGDBG("4-Row nav encoder click (back): pin=%s", pClk);
+			}
+			else
+			{
+				// Button mode: original 3 separate nav buttons
+				AddMCPButtonBinding(m_pConfig->GetPropertyString("4RowBtnBackPin", "0"),
+						    CUIMenu::MenuEventBack);
+				AddMCPButtonBinding(m_pConfig->GetPropertyString("4RowBtnUpPin", "0"),
+						    CUIMenu::MenuEventStepUp);
+				AddMCPButtonBinding(m_pConfig->GetPropertyString("4RowBtnDownPin", "0"),
+						    CUIMenu::MenuEventStepDown);
+			}
+
+			// Home button always present regardless of nav mode
 			AddMCPButtonBinding(m_pConfig->GetPropertyString("4RowBtnHomePin", "0"),
 					    CUIMenu::MenuEventHome);
 
@@ -572,7 +610,10 @@ void CUserInterface::PollMCP()
 				binding.nAccumulator = 0;
 				if (m_bUse4RowUI && m_pUI4Row)
 				{
-					m_pUI4Row->OnEncoderRotate(enc, 1);
+					if (m_bNavEncoderMode && enc == m_nNavEncoderIndex)
+						m_pUI4Row->OnScrollDown(); // CW = scroll down
+					else
+						m_pUI4Row->OnEncoderRotate(enc, 1);
 				}
 				else
 				{
@@ -584,7 +625,10 @@ void CUserInterface::PollMCP()
 				binding.nAccumulator = 0;
 				if (m_bUse4RowUI && m_pUI4Row)
 				{
-					m_pUI4Row->OnEncoderRotate(enc, -1);
+					if (m_bNavEncoderMode && enc == m_nNavEncoderIndex)
+						m_pUI4Row->OnScrollUp(); // CCW = scroll up
+					else
+						m_pUI4Row->OnEncoderRotate(enc, -1);
 				}
 				else
 				{
@@ -706,6 +750,11 @@ void CUserInterface::PollMCP()
 void CUserInterface::ParameterChanged()
 {
 	m_Menu.EventHandler(CUIMenu::MenuEventUpdateParameter);
+
+	if (m_bUse4RowUI && m_pUI4Row)
+	{
+		m_pUI4Row->OnParameterChanged();
+	}
 }
 
 void CUserInterface::DisplayChanged()
