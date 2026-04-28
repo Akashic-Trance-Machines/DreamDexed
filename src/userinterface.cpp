@@ -673,54 +673,76 @@ void CUserInterface::PollMCP()
 			}
 		}
 	}
-	// --- Check 4-row encoder clicks (active-low, falling edge) ---
+	// --- Encoder click handling + long-hold (backspace in text input) ---
+	// For encoder 1 in TextInput mode we use release-based detection to
+	// distinguish short click (advance cursor) from long hold (backspace).
+	// All other encoders keep the standard immediate click-on-press behaviour.
 	if (m_bUse4RowUI && m_pUI4Row)
 	{
-		for (unsigned clk = 0; clk < m_nMCPEncoderClickCount; clk++)
-		{
-			uint8_t nPressed = m_MCPEncoderClicks[clk].bIsPortA ? nPressedA : nPressedB;
-			if (nPressed & (1 << m_MCPEncoderClicks[clk].nBit))
-			{
-				m_pUI4Row->OnEncoderClick(m_MCPEncoderClicks[clk].nEncoderIndex);
-			}
-		}
-	}
+		static unsigned s_nHeldEnc    = ~0u;   // index of currently held enc click (~0=none)
+		static unsigned s_nHeldStart  = 0;     // tick when press began
+		static bool     s_bLongFired  = false; // true once long-hold has fired this press
 
-	// --- Encoder long-hold detection for text input backspace ---
-	if (m_bUse4RowUI && m_pUI4Row)
-	{
-		static unsigned s_nHeldEnc = ~0u;
-		static unsigned s_nHeldEncStart = 0;
-		static bool s_bLongFired = false;
-		const unsigned LONG_HOLD_US = 600000; // 600ms
+		const unsigned LONG_HOLD_US = 600000;  // 600ms threshold
 
 		bool bAnyEncHeld = false;
+
 		for (unsigned clk = 0; clk < m_nMCPEncoderClickCount; clk++)
 		{
-			uint8_t nPort = m_MCPEncoderClicks[clk].bIsPortA ? nPortA : nPortB;
-			bool bHeld = !(nPort & (1 << m_MCPEncoderClicks[clk].nBit)); // active-low
+			uint8_t nPort    = m_MCPEncoderClicks[clk].bIsPortA ? nPortA : nPortB;
+			uint8_t nPressed = m_MCPEncoderClicks[clk].bIsPortA ? nPressedA : nPressedB;
+			bool    bHeld    = !(nPort & (1 << m_MCPEncoderClicks[clk].nBit)); // active-low
+			bool    bJustPressed = (nPressed & (1 << m_MCPEncoderClicks[clk].nBit)) != 0;
+			unsigned nEncIdx = m_MCPEncoderClicks[clk].nEncoderIndex;
 
 			if (bHeld)
 			{
 				bAnyEncHeld = true;
 				unsigned nNow = CTimer::Get()->GetClockTicks();
+
 				if (s_nHeldEnc != clk)
 				{
-					s_nHeldEnc = clk;
-					s_nHeldEncStart = nNow;
+					// Fresh press
+					s_nHeldEnc   = clk;
+					s_nHeldStart = nNow;
 					s_bLongFired = false;
+
+					// Immediate click for non-enc1 (standard behaviour)
+					if (bJustPressed && nEncIdx != 1)
+					{
+						m_pUI4Row->OnEncoderClick(nEncIdx);
+					}
 				}
-				else if (!s_bLongFired && (nNow - s_nHeldEncStart >= LONG_HOLD_US))
+				else if (!s_bLongFired && (nNow - s_nHeldStart >= LONG_HOLD_US))
 				{
+					// Long hold threshold reached — fire long-hold (enc1 = backspace)
 					s_bLongFired = true;
-					m_pUI4Row->OnEncoderLongHold(m_MCPEncoderClicks[clk].nEncoderIndex);
+					m_pUI4Row->OnEncoderLongHold(nEncIdx);
 				}
-				break;
+				break; // only one encoder held at a time
+			}
+			else if (s_nHeldEnc == clk)
+			{
+				// Encoder was just released
+				if (!s_bLongFired)
+				{
+					// Short press released → fire click for enc1
+					// (non-enc1 already fired on press)
+					if (nEncIdx == 1)
+					{
+						m_pUI4Row->OnEncoderClick(nEncIdx);
+					}
+				}
+				// Reset state
+				s_nHeldEnc   = ~0u;
+				s_bLongFired = false;
 			}
 		}
-		if (!bAnyEncHeld)
+
+		if (!bAnyEncHeld && s_nHeldEnc != ~0u)
 		{
-			s_nHeldEnc = ~0u;
+			// Fallback release detection (loop didn't find a match)
+			s_nHeldEnc   = ~0u;
 			s_bLongFired = false;
 		}
 	}

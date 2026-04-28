@@ -147,6 +147,18 @@ void CUI4Row::OnBack()
 	m_bDirty = true;
 }
 
+// Internal navigation without debounce — use for programmatic multi-level back
+void CUI4Row::NavigateBack(unsigned nLevels)
+{
+	for (unsigned i = 0; i < nLevels && m_nMenuDepth > 0; i++)
+	{
+		m_nMenuDepth--;
+		m_nScrollIndex = m_nScrollStack[m_nMenuDepth];
+	}
+	BuildCurrentPage();
+	m_bDirty = true;
+}
+
 void CUI4Row::OnScrollUp()
 {
 	if (!CheckDebounce()) return;
@@ -1070,15 +1082,13 @@ void CUI4Row::OnEncoderClick(unsigned nEncoder)
 					m_nLoadingFrameCount = 0;
 				}
 
-				// Pop back to Performance page (two levels: TextInput → SaveSubmenu → Performance)
-				OnBack();
-				OnBack();
+				// Return to Performance page (TextInput → SaveSubmenu → Performance)
+				NavigateBack(2);
 			}
 			else if (nItemIndex == 3) // Cancel
 			{
-				// Return to Performance page (two levels back)
-				OnBack();
-				OnBack();
+				// Return to Performance page (TextInput → SaveSubmenu → Performance)
+				NavigateBack(2);
 			}
 		}
 		else if (nCurrentMenu == MenuDeleteConfirm)

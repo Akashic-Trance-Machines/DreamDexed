@@ -105,6 +105,9 @@ private:
 	// User bank helpers
 	bool IsUserBank() const; // true when selected bank is 000_user (index 0)
 
+	// Internal navigation (no debounce) — for programmatic multi-level back
+	void NavigateBack(unsigned nLevels);
+
 	// Phase 3: Voices menu pages
 	void BuildVoicesPage();
 	void BuildVoicesPitchBendPage();
