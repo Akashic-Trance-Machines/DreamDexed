@@ -40,6 +40,7 @@ public:
 	// nEncoder: 0–3 (maps to Row 1–4 on current viewport)
 	void OnEncoderRotate(unsigned nEncoder, int nDirection);
 	void OnEncoderClick(unsigned nEncoder);
+	void OnEncoderLongHold(unsigned nEncoder); // held for backspace in text input
 
 	// --- Display rendering ---
 	// Call this to render current menu state to the SSD1306 framebuffer
@@ -99,6 +100,10 @@ private:
 	void BuildStatusPage();
 	void BuildSaveSubmenuPage();
 	void BuildDeleteConfirmPage();
+	void BuildTextInputPage();
+
+	// User bank helpers
+	bool IsUserBank() const; // true when selected bank is 000_user (index 0)
 
 	// Phase 3: Voices menu pages
 	void BuildVoicesPage();
@@ -165,6 +170,12 @@ private:
 	bool     m_bBankIsLoading;
 	unsigned m_nLoadingFrameCount;
 
+	// Text input state (Save-as-New naming screen)
+	static const unsigned TEXT_INPUT_MAX_LEN = 14;
+	char     m_szInputText[TEXT_INPUT_MAX_LEN + 1];
+	unsigned m_nInputCursorPos;        // current cursor character position (0..13)
+	bool     m_bInputIsCopy;           // true = Copy flow (pre-fills name)
+
 	// Selector state (Phase 3+)
 	unsigned m_nActiveTG;          // 0 to N-1 tone generators
 	unsigned m_nActiveOP;          // 0-5 for Operators submenu
@@ -207,6 +218,8 @@ private:
 		MenuEffectsCS2LowShelf,
 		MenuEffectsCS2HighShelf,
 		MenuEffectsCS2LowPass,
+		// Save text input
+		MenuTextInput,
 		// Future phases:
 		MenuMixer,
 		MenuCount,

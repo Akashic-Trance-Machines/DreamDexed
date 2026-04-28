@@ -686,6 +686,45 @@ void CUserInterface::PollMCP()
 		}
 	}
 
+	// --- Encoder long-hold detection for text input backspace ---
+	if (m_bUse4RowUI && m_pUI4Row)
+	{
+		static unsigned s_nHeldEnc = ~0u;
+		static unsigned s_nHeldEncStart = 0;
+		static bool s_bLongFired = false;
+		const unsigned LONG_HOLD_US = 600000; // 600ms
+
+		bool bAnyEncHeld = false;
+		for (unsigned clk = 0; clk < m_nMCPEncoderClickCount; clk++)
+		{
+			uint8_t nPort = m_MCPEncoderClicks[clk].bIsPortA ? nPortA : nPortB;
+			bool bHeld = !(nPort & (1 << m_MCPEncoderClicks[clk].nBit)); // active-low
+
+			if (bHeld)
+			{
+				bAnyEncHeld = true;
+				unsigned nNow = CTimer::Get()->GetClockTicks();
+				if (s_nHeldEnc != clk)
+				{
+					s_nHeldEnc = clk;
+					s_nHeldEncStart = nNow;
+					s_bLongFired = false;
+				}
+				else if (!s_bLongFired && (nNow - s_nHeldEncStart >= LONG_HOLD_US))
+				{
+					s_bLongFired = true;
+					m_pUI4Row->OnEncoderLongHold(m_MCPEncoderClicks[clk].nEncoderIndex);
+				}
+				break;
+			}
+		}
+		if (!bAnyEncHeld)
+		{
+			s_nHeldEnc = ~0u;
+			s_bLongFired = false;
+		}
+	}
+
 	// --- Auto-repeat for held Up/Down buttons (4-row mode) ---
 	if (m_bUse4RowUI && m_pUI4Row)
 	{

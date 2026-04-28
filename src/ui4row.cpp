@@ -105,6 +105,9 @@ m_bMasterMuted{false}
 	m_nSelectedPerformanceID = 0;
 	m_bBankIsLoading = false;
 	m_nLoadingFrameCount = 0;
+	memset(m_szInputText, 0, sizeof(m_szInputText));
+	m_nInputCursorPos = 0;
+	m_bInputIsCopy = false;
 
 	// Initialize with the Home page
 	m_nMenuStack[0] = MenuHome;
@@ -289,6 +292,41 @@ void CUI4Row::OnEncoderRotate(unsigned nEncoder, int nDirection)
 		// Rebuild page to show updated values
 		BuildCurrentPage();
 		m_bDirty = true;
+	}
+	else if (nCurrentMenu == MenuTextInput)
+	{
+		// Only encoder 1 (nEncoder==1, row index 1) controls the character
+		if (nEncoder == 1)
+		{
+			// Character cycling sequence: a-z, A-Z, 0-9, space, -, _, .
+			static const char charSeq[] =
+				"abcdefghijklmnopqrstuvwxyz"
+				"ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+				"0123456789 -_.";
+			static const unsigned seqLen = sizeof(charSeq) - 1;
+
+			char cur = m_szInputText[m_nInputCursorPos];
+			// Find current char in sequence
+			int idx = -1;
+			for (unsigned i = 0; i < seqLen; i++)
+			{
+				if (charSeq[i] == cur) { idx = (int)i; break; }
+			}
+			if (idx < 0) idx = 0; // default to 'a' if not found
+
+			if (nDirection > 0)
+			{
+				idx = (idx + 1) % (int)seqLen;
+			}
+			else
+			{
+				idx = (idx - 1 + (int)seqLen) % (int)seqLen;
+			}
+
+			m_szInputText[m_nInputCursorPos] = charSeq[idx];
+			BuildCurrentPage();
+			m_bDirty = true;
+		}
 	}
 	else if (nCurrentMenu == MenuVoices)
 	{
@@ -833,12 +871,26 @@ void CUI4Row::OnEncoderClick(unsigned nEncoder)
 {
 	if (!CheckDebounce()) return;
 
+	unsigned nCurrentMenu = m_nMenuStack[m_nMenuDepth];
+
+	// --- Text input: encoder 1 click confirms char and advances cursor ---
+	if (nCurrentMenu == MenuTextInput && nEncoder == 1)
+	{
+		if (m_nInputCursorPos < TEXT_INPUT_MAX_LEN - 1)
+		{
+			m_nInputCursorPos++;
+		}
+		// (at end of name, further clicks do nothing — use Save row instead)
+		BuildCurrentPage();
+		m_bDirty = true;
+		return;
+	}
+
 	unsigned nItemIndex = m_nScrollIndex + nEncoder;
 	if (nItemIndex >= m_CurrentPage.nRowCount)
 		return;
 
 	TMenuRow &row = m_CurrentPage.Rows[nItemIndex];
-	unsigned nCurrentMenu = m_nMenuStack[m_nMenuDepth];
 
 	// --- Handle "enter submenu" action ---
 	if (row.Type == RowTypeMenuItem && row.Action == ActionEnterSubmenu)
@@ -956,17 +1008,76 @@ void CUI4Row::OnEncoderClick(unsigned nEncoder)
 	{
 		if (nCurrentMenu == MenuSaveSubmenu)
 		{
-			if (nItemIndex == 0) // Overwrite
+			if (nItemIndex == 0) // Copy — pre-fill name from current performance
 			{
-				m_pMiniDexed->SavePerformance(false);
-				LOGDBG("Performance saved (overwrite)");
-				// Go back to Performance page
+				int nPerfID = m_nSelectedPerformanceID;
+				std::string perfName = m_pMiniDexed->GetPerformanceName(nPerfID);
+				// Pre-fill input buffer with current name, padded with spaces
+				memset(m_szInputText, ' ', TEXT_INPUT_MAX_LEN);
+				m_szInputText[TEXT_INPUT_MAX_LEN] = '\0';
+				unsigned copyLen = perfName.length();
+				if (copyLen > TEXT_INPUT_MAX_LEN) copyLen = TEXT_INPUT_MAX_LEN;
+				memcpy(m_szInputText, perfName.c_str(), copyLen);
+				m_nInputCursorPos = 0;
+				m_bInputIsCopy = true;
+				m_nMenuStack[m_nMenuDepth] = MenuTextInput;
+				BuildCurrentPage();
+				m_bDirty = true;
+			}
+			else if (nItemIndex == 1) // New — blank name
+			{
+				// Generate default name e.g. "Perf000001"
+				std::string defaultName = m_pMiniDexed->GetNewPerformanceDefaultName();
+				memset(m_szInputText, ' ', TEXT_INPUT_MAX_LEN);
+				m_szInputText[TEXT_INPUT_MAX_LEN] = '\0';
+				unsigned copyLen = defaultName.length();
+				if (copyLen > TEXT_INPUT_MAX_LEN) copyLen = TEXT_INPUT_MAX_LEN;
+				memcpy(m_szInputText, defaultName.c_str(), copyLen);
+				m_nInputCursorPos = 0;
+				m_bInputIsCopy = false;
+				m_nMenuStack[m_nMenuDepth] = MenuTextInput;
+				BuildCurrentPage();
+				m_bDirty = true;
+			}
+			else if (nItemIndex == 2) // Cancel
+			{
 				OnBack();
 			}
-			else if (nItemIndex == 2) // Save as default
+		}
+		else if (nCurrentMenu == MenuTextInput)
+		{
+			if (nItemIndex == 2) // Save
 			{
-				m_pMiniDexed->SavePerformance(true);
-				LOGDBG("Performance saved as default");
+				// Trim trailing spaces from the name
+				std::string sName(m_szInputText, TEXT_INPUT_MAX_LEN);
+				size_t nEnd = sName.find_last_not_of(' ');
+				if (nEnd != std::string::npos)
+					sName = sName.substr(0, nEnd + 1);
+				else
+					sName = "Unnamed";
+
+				m_pMiniDexed->SetNewPerformanceName(sName);
+				bool bOK = m_pMiniDexed->SavePerformanceNewFile();
+				LOGDBG("Performance saved as new: '%s' %s", sName.c_str(), bOK ? "OK" : "FAIL");
+
+				// Switch to user bank (bank 0) and reload
+				if (bOK)
+				{
+					m_pMiniDexed->SetParameter(CMiniDexed::ParameterPerformanceBank, 0);
+					m_pMiniDexed->SetFirstPerformance();
+					m_nSelectedPerformanceBankID = 0;
+					m_bBankIsLoading = true;
+					m_nLoadingFrameCount = 0;
+				}
+
+				// Pop back to Performance page (two levels: TextInput → SaveSubmenu → Performance)
+				OnBack();
+				OnBack();
+			}
+			else if (nItemIndex == 3) // Cancel
+			{
+				// Return to Performance page (two levels back)
+				OnBack();
 				OnBack();
 			}
 		}
@@ -977,8 +1088,6 @@ void CUI4Row::OnEncoderClick(unsigned nEncoder)
 				int nPerfID = m_pMiniDexed->GetActualPerformanceID();
 				m_pMiniDexed->DeletePerformance(nPerfID);
 				LOGDBG("Performance %d deleted", nPerfID);
-				// Pop back twice (Delete confirm → Performance → Home)
-				// or just go back to Performance
 				OnBack();
 			}
 			else if (nItemIndex == 2) // Cancel
@@ -1086,6 +1195,10 @@ void CUI4Row::BuildCurrentPage()
 
 	case MenuDeleteConfirm:
 		BuildDeleteConfirmPage();
+		break;
+
+	case MenuTextInput:
+		BuildTextInputPage();
 		break;
 
 	// Phase 3: Voices menus
@@ -1224,7 +1337,7 @@ void CUI4Row::BuildPerformancePage()
 		m_CurrentPage.Rows[1].Action = ActionNone;
 	}
 
-	// Row 2: Save (submenu)
+	// Row 2: Save (submenu) — always available
 	{
 		m_CurrentPage.Rows[2].Type = RowTypeMenuItem;
 		m_CurrentPage.Rows[2].pLabel = "Save";
@@ -1232,12 +1345,30 @@ void CUI4Row::BuildPerformancePage()
 		m_CurrentPage.Rows[2].Action = ActionEnterSubmenu;
 	}
 
-	// Row 3: Delete (submenu)
+	// Row 3: Delete (submenu) — only visible on user bank performances
 	{
-		m_CurrentPage.Rows[3].Type = RowTypeMenuItem;
-		m_CurrentPage.Rows[3].pLabel = "Delete";
-		m_CurrentPage.Rows[3].pValue = "";
-		m_CurrentPage.Rows[3].Action = ActionEnterSubmenu;
+		if (IsUserBank() && !m_bBankIsLoading)
+		{
+			m_CurrentPage.Rows[3].Type = RowTypeMenuItem;
+			m_CurrentPage.Rows[3].pLabel = "Delete";
+			m_CurrentPage.Rows[3].pValue = "";
+			m_CurrentPage.Rows[3].Action = ActionEnterSubmenu;
+		}
+		else
+		{
+			// Hide Delete on factory banks — show PCCH here instead
+			int nPCCH = m_pMiniDexed->GetParameter(CMiniDexed::ParameterPerformanceSelectChannel);
+			if (nPCCH >= (int)CMIDIDevice::Disabled)
+				snprintf(m_szValueBuf[3], VALUE_BUF_LEN, "Off");
+			else if (nPCCH == (int)CMIDIDevice::OmniMode)
+				snprintf(m_szValueBuf[3], VALUE_BUF_LEN, "Omni");
+			else
+				snprintf(m_szValueBuf[3], VALUE_BUF_LEN, "%d", nPCCH + 1);
+			m_CurrentPage.Rows[3].Type = RowTypeProperty;
+			m_CurrentPage.Rows[3].pLabel = "PCCH";
+			m_CurrentPage.Rows[3].pValue = m_szValueBuf[3];
+			m_CurrentPage.Rows[3].Action = ActionNone;
+		}
 	}
 
 	// Row 4: PCCH (Performance Select Channel)
@@ -1333,26 +1464,26 @@ void CUI4Row::BuildSaveSubmenuPage()
 	m_CurrentPage.pTitle = "Save";
 	m_CurrentPage.nRowCount = 3;
 
-	// Row 0: Overwrite
+	// Row 0: Copy — save to user bank using current performance name (editable)
 	{
 		m_CurrentPage.Rows[0].Type = RowTypeAction;
-		m_CurrentPage.Rows[0].pLabel = "Overwrite";
+		m_CurrentPage.Rows[0].pLabel = "Copy";
 		m_CurrentPage.Rows[0].pValue = "";
 		m_CurrentPage.Rows[0].Action = ActionCommand;
 	}
 
-	// Row 1: New (text input — stubbed until Phase 6)
+	// Row 1: New — save to user bank with a new name
 	{
-		m_CurrentPage.Rows[1].Type = RowTypeMenuItem;
+		m_CurrentPage.Rows[1].Type = RowTypeAction;
 		m_CurrentPage.Rows[1].pLabel = "New";
 		m_CurrentPage.Rows[1].pValue = "";
-		m_CurrentPage.Rows[1].Action = ActionEnterSubmenu;
+		m_CurrentPage.Rows[1].Action = ActionCommand;
 	}
 
-	// Row 2: Save as default
+	// Row 2: Cancel
 	{
 		m_CurrentPage.Rows[2].Type = RowTypeAction;
-		m_CurrentPage.Rows[2].pLabel = "Save as default";
+		m_CurrentPage.Rows[2].pLabel = "Cancel";
 		m_CurrentPage.Rows[2].pValue = "";
 		m_CurrentPage.Rows[2].Action = ActionCommand;
 	}
@@ -1389,6 +1520,77 @@ void CUI4Row::BuildDeleteConfirmPage()
 		m_CurrentPage.Rows[2].pLabel = "Cancel";
 		m_CurrentPage.Rows[2].pValue = "";
 		m_CurrentPage.Rows[2].Action = ActionCommand;
+	}
+}
+
+bool CUI4Row::IsUserBank() const
+{
+	// Bank 0 is the user bank (000_user sorts alphabetically first)
+	return m_nSelectedPerformanceBankID == 0;
+}
+
+void CUI4Row::BuildTextInputPage()
+{
+	m_CurrentPage.pTitle = "Name";
+	m_CurrentPage.nRowCount = 4;
+
+	// Row 0: static title label
+	{
+		m_CurrentPage.Rows[0].Type = RowTypeReadOnly;
+		m_CurrentPage.Rows[0].pLabel = "Name";
+		m_CurrentPage.Rows[0].pValue = "";
+		m_CurrentPage.Rows[0].Action = ActionNone;
+	}
+
+	// Row 1: The name being edited with cursor
+	{
+		// Build display string: name with cursor underline character at cursor pos
+		char szDisplay[TEXT_INPUT_MAX_LEN + 2];
+		memcpy(szDisplay, m_szInputText, TEXT_INPUT_MAX_LEN);
+		szDisplay[TEXT_INPUT_MAX_LEN] = '\0';
+
+		// Replace cursor position with blinking indicator (use special char)
+		// We highlight the cursor position with square brackets: A[B]CD
+		static char szWithCursor[TEXT_INPUT_MAX_LEN + 4];
+		unsigned pos = m_nInputCursorPos;
+		unsigned len = 0;
+		for (unsigned i = 0; i < TEXT_INPUT_MAX_LEN; i++)
+		{
+			if (i == pos)
+			{
+				szWithCursor[len++] = '[';
+				szWithCursor[len++] = (szDisplay[i] >= 32 && szDisplay[i] < 127) ? szDisplay[i] : ' ';
+				szWithCursor[len++] = ']';
+			}
+			else
+			{
+				szWithCursor[len++] = (szDisplay[i] >= 32 && szDisplay[i] < 127) ? szDisplay[i] : ' ';
+			}
+		}
+		szWithCursor[len] = '\0';
+
+		snprintf(m_szValueBuf[1], VALUE_BUF_LEN, "%s", szWithCursor);
+
+		m_CurrentPage.Rows[1].Type = RowTypeProperty;
+		m_CurrentPage.Rows[1].pLabel = "";
+		m_CurrentPage.Rows[1].pValue = m_szValueBuf[1];
+		m_CurrentPage.Rows[1].Action = ActionNone;
+	}
+
+	// Row 2: Save action
+	{
+		m_CurrentPage.Rows[2].Type = RowTypeAction;
+		m_CurrentPage.Rows[2].pLabel = "Save";
+		m_CurrentPage.Rows[2].pValue = "";
+		m_CurrentPage.Rows[2].Action = ActionCommand;
+	}
+
+	// Row 3: Cancel action
+	{
+		m_CurrentPage.Rows[3].Type = RowTypeAction;
+		m_CurrentPage.Rows[3].pLabel = "Cancel";
+		m_CurrentPage.Rows[3].pValue = "";
+		m_CurrentPage.Rows[3].Action = ActionCommand;
 	}
 }
 
@@ -2676,3 +2878,19 @@ void CUI4Row::Render(CSSD1306Device *pDisplay)
 	m_bDirty = false;
 }
 
+void CUI4Row::OnEncoderLongHold(unsigned nEncoder)
+{
+	unsigned nCurrentMenu = m_nMenuStack[m_nMenuDepth];
+
+	// Long-hold on encoder 1 while in text input = backspace
+	if (nCurrentMenu == MenuTextInput && nEncoder == 1)
+	{
+		if (m_nInputCursorPos > 0)
+		{
+			m_nInputCursorPos--;
+			m_szInputText[m_nInputCursorPos] = ' '; // erase char at new position
+		}
+		BuildCurrentPage();
+		m_bDirty = true;
+	}
+}
