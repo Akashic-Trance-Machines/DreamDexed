@@ -2804,6 +2804,11 @@ void CUI4Row::RenderRow(unsigned nScreenRow, unsigned nItemIndex)
 		else
 			snprintf(szText, sizeof(szText), "%s", row.pLabel);
 	}
+	else if (row.pValue && row.pValue[0])
+	{
+		// Value-only row (e.g. text input name line — full width)
+		snprintf(szText, sizeof(szText), "%s", row.pValue);
+	}
 	else
 	{
 		szText[0] = '\0';
