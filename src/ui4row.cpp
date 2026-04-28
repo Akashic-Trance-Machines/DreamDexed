@@ -1072,14 +1072,31 @@ void CUI4Row::OnEncoderClick(unsigned nEncoder)
 				bool bOK = m_pMiniDexed->SavePerformanceNewFile();
 				LOGDBG("Performance saved as new: '%s' %s", sName.c_str(), bOK ? "OK" : "FAIL");
 
-				// Switch to user bank (bank 0) and reload
+				// Switch UI to user bank
 				if (bOK)
 				{
-					m_pMiniDexed->SetParameter(CMiniDexed::ParameterPerformanceBank, 0);
-					m_pMiniDexed->SetFirstPerformance();
-					m_nSelectedPerformanceBankID = 0;
-					m_bBankIsLoading = true;
-					m_nLoadingFrameCount = 0;
+					// Find the user bank index by name
+					int nUserBankID = -1;
+					int nLastBank = m_pMiniDexed->GetLastPerformanceBank();
+					for (int b = 0; b <= nLastBank; b++)
+					{
+						if (!m_pMiniDexed->IsValidPerformanceBank(b)) continue;
+						std::string bName = m_pMiniDexed->GetPerformanceConfig()->GetPerformanceBankName(b);
+						for (char &c : bName) c = (char)tolower((unsigned char)c);
+						if (bName.find("user") != std::string::npos)
+						{
+							nUserBankID = b;
+							break;
+						}
+					}
+					if (nUserBankID >= 0)
+					{
+						m_pMiniDexed->SetParameter(CMiniDexed::ParameterPerformanceBank, nUserBankID);
+						m_pMiniDexed->SetFirstPerformance();
+						m_nSelectedPerformanceBankID = (unsigned)nUserBankID;
+						m_bBankIsLoading = true;
+						m_nLoadingFrameCount = 0;
+					}
 				}
 
 				// Return to Performance page (TextInput → SaveSubmenu → Performance)
@@ -1535,8 +1552,13 @@ void CUI4Row::BuildDeleteConfirmPage()
 
 bool CUI4Row::IsUserBank() const
 {
-	// Bank 0 is the user bank (000_user sorts alphabetically first)
-	return m_nSelectedPerformanceBankID == 0;
+	// The user bank is identified by the word "user" in its name.
+	// It is stored as 005_user on disk, which maps to internal bank index 4.
+	// We detect by bank name so the index is never hardcoded.
+	std::string bankName = m_pMiniDexed->GetPerformanceConfig()->GetPerformanceBankName(m_nSelectedPerformanceBankID);
+	// Convert to lowercase for case-insensitive match
+	for (char &c : bankName) c = (char)tolower((unsigned char)c);
+	return bankName.find("user") != std::string::npos;
 }
 
 void CUI4Row::BuildTextInputPage()
