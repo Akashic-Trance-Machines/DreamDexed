@@ -179,6 +179,10 @@ private:
 	unsigned m_nInputCursorPos;        // current cursor character position (0..13)
 	bool     m_bInputIsCopy;           // true = Copy flow (pre-fills name)
 
+	// Deferred save state: wait for user bank switch to complete before saving
+	bool        m_bPendingSave;        // true = save queued, waiting for bank load
+	std::string m_sPendingSaveName;    // name to save once user bank is active
+
 	// Selector state (Phase 3+)
 	unsigned m_nActiveTG;          // 0 to N-1 tone generators
 	unsigned m_nActiveOP;          // 0-5 for Operators submenu

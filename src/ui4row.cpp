@@ -108,7 +108,8 @@ m_bMasterMuted{false}
 	memset(m_szInputText, 0, sizeof(m_szInputText));
 	m_nInputCursorPos = 0;
 	m_bInputIsCopy = false;
-
+	m_bPendingSave = false;
+	m_sPendingSaveName = "";
 	// Initialize with the Home page
 	m_nMenuStack[0] = MenuHome;
 	BuildCurrentPage();
@@ -1068,38 +1069,40 @@ void CUI4Row::OnEncoderClick(unsigned nEncoder)
 				else
 					sName = "Unnamed";
 
-				m_pMiniDexed->SetNewPerformanceName(sName);
-				bool bOK = m_pMiniDexed->SavePerformanceNewFile();
-				LOGDBG("Performance saved as new: '%s' %s", sName.c_str(), bOK ? "OK" : "FAIL");
-
-				// Switch UI to user bank
-				if (bOK)
+				// Find user bank index by name
+				int nUserBankID = -1;
+				int nLastBank = m_pMiniDexed->GetLastPerformanceBank();
+				for (int b = 0; b <= nLastBank; b++)
 				{
-					// Find the user bank index by name
-					int nUserBankID = -1;
-					int nLastBank = m_pMiniDexed->GetLastPerformanceBank();
-					for (int b = 0; b <= nLastBank; b++)
+					if (!m_pMiniDexed->IsValidPerformanceBank(b)) continue;
+					std::string bName = m_pMiniDexed->GetPerformanceConfig()->GetPerformanceBankName(b);
+					for (char &c : bName) c = (char)tolower((unsigned char)c);
+					if (bName.find("user") != std::string::npos)
 					{
-						if (!m_pMiniDexed->IsValidPerformanceBank(b)) continue;
-						std::string bName = m_pMiniDexed->GetPerformanceConfig()->GetPerformanceBankName(b);
-						for (char &c : bName) c = (char)tolower((unsigned char)c);
-						if (bName.find("user") != std::string::npos)
-						{
-							nUserBankID = b;
-							break;
-						}
-					}
-					if (nUserBankID >= 0)
-					{
-						m_pMiniDexed->SetParameter(CMiniDexed::ParameterPerformanceBank, nUserBankID);
-						m_pMiniDexed->SetFirstPerformance();
-						m_nSelectedPerformanceBankID = (unsigned)nUserBankID;
-						m_bBankIsLoading = true;
-						m_nLoadingFrameCount = 0;
+						nUserBankID = b;
+						break;
 					}
 				}
 
-				// Return to Performance page (TextInput → SaveSubmenu → Performance)
+				if (nUserBankID >= 0)
+				{
+					// Step 1: switch to user bank. The actual save fires in
+					// OnParameterChanged() once the bank load completes.
+					m_sPendingSaveName = sName;
+					m_bPendingSave = true;
+					m_pMiniDexed->SetParameter(CMiniDexed::ParameterPerformanceBank, nUserBankID);
+					m_pMiniDexed->SetFirstPerformance();
+					m_nSelectedPerformanceBankID = (unsigned)nUserBankID;
+					m_bBankIsLoading = true;
+					m_nLoadingFrameCount = 0;
+					LOGDBG("Save queued: '%s', switching to user bank %d", sName.c_str(), nUserBankID);
+				}
+				else
+				{
+					LOGWARN("No user bank found — save cancelled");
+				}
+
+				// Return to Performance page now (will show Loading... until bank switch done)
 				NavigateBack(2);
 			}
 			else if (nItemIndex == 3) // Cancel
@@ -1186,6 +1189,20 @@ void CUI4Row::OnParameterChanged()
 	m_nSelectedPerformanceBankID = m_pMiniDexed->GetPerformanceBank();
 	m_nSelectedPerformanceID = m_pMiniDexed->GetActualPerformanceID();
 	m_bBankIsLoading = false; // Loading finished
+
+	// Step 2 of deferred save: bank switch completed, now do the actual save
+	if (m_bPendingSave && IsUserBank())
+	{
+		m_bPendingSave = false;
+		m_pMiniDexed->SetNewPerformanceName(m_sPendingSaveName);
+		bool bOK = m_pMiniDexed->SavePerformanceNewFile();
+		LOGDBG("Deferred save: '%s' %s", m_sPendingSaveName.c_str(), bOK ? "OK" : "FAIL");
+		m_sPendingSaveName = "";
+		// The save itself is async; OnParameterChanged will fire again when it completes
+		// and will refresh the performance list. Trigger a loading indicator in the meantime.
+		m_bBankIsLoading = true;
+		m_nLoadingFrameCount = 0;
+	}
 
 	// Rebuild current page to reflect external changes
 	BuildCurrentPage();
