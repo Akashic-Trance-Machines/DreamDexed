@@ -1103,12 +1103,12 @@ void CUI4Row::OnEncoderClick(unsigned nEncoder)
 				}
 
 				// Return to Performance page now (will show Loading... until bank switch done)
-				NavigateBack(2);
+				NavigateBack(1);
 			}
 			else if (nItemIndex == 3) // Cancel
 			{
-				// Return to Performance page (TextInput → SaveSubmenu → Performance)
-				NavigateBack(2);
+				// Return to Performance page (TextInput replaced SaveSubmenu, so we only go back 1 level)
+				NavigateBack(1);
 			}
 		}
 		else if (nCurrentMenu == MenuDeleteConfirm)
