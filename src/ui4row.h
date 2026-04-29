@@ -10,6 +10,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <string>
 
 extern "C" {
 #include "u8g2/u8g2.h"
