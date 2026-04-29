@@ -275,27 +275,33 @@ void CUI4Row::OnEncoderRotate(unsigned nEncoder, int nDirection)
 			}
 			break;
 		}
-		case 4: // PCCH
+		case 4: // PCCH (user bank) or Filter (factory bank)
+		case 3: // PCCH (factory bank, Delete hidden)
+		case 5: // Filter (user bank)
 		{
-			int nValue = m_pMiniDexed->GetParameter(CMiniDexed::ParameterPerformanceSelectChannel);
-			nValue += nDirection;
-			if (nValue < 0)
-				nValue = 0;
-			if (nValue > (int)CMIDIDevice::Disabled)
-				nValue = (int)CMIDIDevice::Disabled;
-			m_pMiniDexed->SetParameter(CMiniDexed::ParameterPerformanceSelectChannel, nValue);
-			break;
-		}
-		case 5: // Design Filter
-		{
-			int nValue = m_pMiniDexed->GetParameter(CMiniDexed::ParameterSDFilter);
-			int nMax = SDFilter::get_maximum(m_pConfig->GetToneGenerators());
-			nValue += nDirection;
-			if (nValue < 0)
-				nValue = 0;
-			if (nValue > nMax)
-				nValue = nMax;
-			m_pMiniDexed->SetParameter(CMiniDexed::ParameterSDFilter, nValue);
+			// Dynamic rows — identify by label
+			const char *pLabel = m_CurrentPage.Rows[nItemIndex].pLabel;
+			if (pLabel && strcmp(pLabel, "PCCH") == 0)
+			{
+				int nValue = m_pMiniDexed->GetParameter(CMiniDexed::ParameterPerformanceSelectChannel);
+				nValue += nDirection;
+				if (nValue < 0)
+					nValue = 0;
+				if (nValue > (int)CMIDIDevice::Disabled)
+					nValue = (int)CMIDIDevice::Disabled;
+				m_pMiniDexed->SetParameter(CMiniDexed::ParameterPerformanceSelectChannel, nValue);
+			}
+			else if (pLabel && strcmp(pLabel, "Filter") == 0)
+			{
+				int nValue = m_pMiniDexed->GetParameter(CMiniDexed::ParameterSDFilter);
+				int nMax = SDFilter::get_maximum(m_pConfig->GetToneGenerators());
+				nValue += nDirection;
+				if (nValue < 0)
+					nValue = 0;
+				if (nValue > nMax)
+					nValue = nMax;
+				m_pMiniDexed->SetParameter(CMiniDexed::ParameterSDFilter, nValue);
+			}
 			break;
 		}
 		default:
@@ -1054,7 +1060,7 @@ void CUI4Row::OnEncoderClick(unsigned nEncoder)
 			}
 			else if (nItemIndex == 2) // Cancel
 			{
-				OnBack();
+				NavigateBack(1);
 			}
 		}
 		else if (nCurrentMenu == MenuTextInput)
@@ -1198,10 +1204,10 @@ void CUI4Row::OnParameterChanged()
 		bool bOK = m_pMiniDexed->SavePerformanceNewFile();
 		LOGDBG("Deferred save: '%s' %s", m_sPendingSaveName.c_str(), bOK ? "OK" : "FAIL");
 		m_sPendingSaveName = "";
-		// The save itself is async; OnParameterChanged will fire again when it completes
-		// and will refresh the performance list. Trigger a loading indicator in the meantime.
-		m_bBankIsLoading = true;
-		m_nLoadingFrameCount = 0;
+		// Note: SavePerformanceNewFile() only sets a flag. The actual save
+		// happens in the engine's next Run() cycle via DoSavePerformanceNewFile().
+		// That save does NOT trigger OnParameterChanged, so we must NOT set
+		// m_bBankIsLoading here — it would never be cleared.
 	}
 
 	// Rebuild current page to reflect external changes
@@ -1389,61 +1395,52 @@ void CUI4Row::BuildPerformancePage()
 		m_CurrentPage.Rows[2].Action = ActionEnterSubmenu;
 	}
 
+	// Dynamic rows 3+: Delete (user bank only), then PCCH, then Filter
+	unsigned nRow = 3;
+
 	// Row 3: Delete (submenu) — only visible on user bank performances
+	if (IsUserBank() && !m_bBankIsLoading)
 	{
-		if (IsUserBank() && !m_bBankIsLoading)
-		{
-			m_CurrentPage.Rows[3].Type = RowTypeMenuItem;
-			m_CurrentPage.Rows[3].pLabel = "Delete";
-			m_CurrentPage.Rows[3].pValue = "";
-			m_CurrentPage.Rows[3].Action = ActionEnterSubmenu;
-		}
-		else
-		{
-			// Hide Delete on factory banks — show PCCH here instead
-			int nPCCH = m_pMiniDexed->GetParameter(CMiniDexed::ParameterPerformanceSelectChannel);
-			if (nPCCH >= (int)CMIDIDevice::Disabled)
-				snprintf(m_szValueBuf[3], VALUE_BUF_LEN, "Off");
-			else if (nPCCH == (int)CMIDIDevice::OmniMode)
-				snprintf(m_szValueBuf[3], VALUE_BUF_LEN, "Omni");
-			else
-				snprintf(m_szValueBuf[3], VALUE_BUF_LEN, "%d", nPCCH + 1);
-			m_CurrentPage.Rows[3].Type = RowTypeProperty;
-			m_CurrentPage.Rows[3].pLabel = "PCCH";
-			m_CurrentPage.Rows[3].pValue = m_szValueBuf[3];
-			m_CurrentPage.Rows[3].Action = ActionNone;
-		}
+		m_CurrentPage.Rows[nRow].Type = RowTypeMenuItem;
+		m_CurrentPage.Rows[nRow].pLabel = "Delete";
+		m_CurrentPage.Rows[nRow].pValue = "";
+		m_CurrentPage.Rows[nRow].Action = ActionEnterSubmenu;
+		nRow++;
 	}
 
-	// Row 4: PCCH (Performance Select Channel)
+	// PCCH (Performance Select Channel)
 	{
 		int nPCCH = m_pMiniDexed->GetParameter(CMiniDexed::ParameterPerformanceSelectChannel);
 		if (nPCCH >= (int)CMIDIDevice::Disabled)
-			snprintf(m_szValueBuf[4], VALUE_BUF_LEN, "Off");
+			snprintf(m_szValueBuf[nRow], VALUE_BUF_LEN, "Off");
 		else if (nPCCH == (int)CMIDIDevice::OmniMode)
-			snprintf(m_szValueBuf[4], VALUE_BUF_LEN, "Omni");
+			snprintf(m_szValueBuf[nRow], VALUE_BUF_LEN, "Omni");
 		else
-			snprintf(m_szValueBuf[4], VALUE_BUF_LEN, "%d", nPCCH + 1);
+			snprintf(m_szValueBuf[nRow], VALUE_BUF_LEN, "%d", nPCCH + 1);
 
-		m_CurrentPage.Rows[4].Type = RowTypeProperty;
-		m_CurrentPage.Rows[4].pLabel = "PCCH";
-		m_CurrentPage.Rows[4].pValue = m_szValueBuf[4];
-		m_CurrentPage.Rows[4].Action = ActionNone;
+		m_CurrentPage.Rows[nRow].Type = RowTypeProperty;
+		m_CurrentPage.Rows[nRow].pLabel = "PCCH";
+		m_CurrentPage.Rows[nRow].pValue = m_szValueBuf[nRow];
+		m_CurrentPage.Rows[nRow].Action = ActionNone;
+		nRow++;
 	}
 
-	// Row 5: Design Filter
+	// Design Filter
 	{
 		int nFilter = m_pMiniDexed->GetParameter(CMiniDexed::ParameterSDFilter);
 		int nTGs = m_pConfig->GetToneGenerators();
 		SDFilter filter = SDFilter::to_filter(nFilter, nTGs);
 		std::string filterStr = filter.to_string();
-		snprintf(m_szValueBuf[5], VALUE_BUF_LEN, "%s", filterStr.c_str());
+		snprintf(m_szValueBuf[nRow], VALUE_BUF_LEN, "%s", filterStr.c_str());
 
-		m_CurrentPage.Rows[5].Type = RowTypeProperty;
-		m_CurrentPage.Rows[5].pLabel = "Filter";
-		m_CurrentPage.Rows[5].pValue = m_szValueBuf[5];
-		m_CurrentPage.Rows[5].Action = ActionNone;
+		m_CurrentPage.Rows[nRow].Type = RowTypeProperty;
+		m_CurrentPage.Rows[nRow].pLabel = "Filter";
+		m_CurrentPage.Rows[nRow].pValue = m_szValueBuf[nRow];
+		m_CurrentPage.Rows[nRow].Action = ActionNone;
+		nRow++;
 	}
+
+	m_CurrentPage.nRowCount = nRow;
 }
 
 void CUI4Row::BuildStatusPage()
