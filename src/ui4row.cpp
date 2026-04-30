@@ -1092,23 +1092,40 @@ void CUI4Row::OnEncoderClick(unsigned nEncoder)
 
 				if (nUserBankID >= 0)
 				{
-					// Step 1: switch to user bank. The actual save fires in
-					// OnParameterChanged() once the bank load completes.
-					m_sPendingSaveName = sName;
-					m_bPendingSave = true;
+					CPerformanceConfig *pConfig = m_pMiniDexed->GetPerformanceConfig();
+
+					// Step 1: Switch ONLY the config's bank pointer to user bank.
+					// This does NOT load a performance — the engine keeps playing
+					// the current sound. CreateNewPerformanceFile() will use this
+					// bank to determine the save directory.
+					pConfig->SetNewPerformanceBank(nUserBankID);
+
+					// Step 2: Set name and trigger async save.
+					// SavePerformanceNewFile() sets a flag processed in Run().
+					// In Run(), the save is processed BEFORE the bank switch (below),
+					// so SavePerformance(false) captures the CURRENT engine state
+					// (the performance the user was actually playing).
+					m_pMiniDexed->SetNewPerformanceName(sName);
+					m_pMiniDexed->SavePerformanceNewFile();
+
+					// Step 3: Trigger engine bank switch to user bank.
+					// This is processed in Run() AFTER the save completes.
+					// It calls ListPerformances (finds our new file) and
+					// loads the first performance, firing OnParameterChanged.
 					m_pMiniDexed->SetParameter(CMiniDexed::ParameterPerformanceBank, nUserBankID);
 					m_pMiniDexed->SetFirstPerformance();
+
 					m_nSelectedPerformanceBankID = (unsigned)nUserBankID;
 					m_bBankIsLoading = true;
 					m_nLoadingFrameCount = 0;
-					LOGDBG("Save queued: '%s', switching to user bank %d", sName.c_str(), nUserBankID);
+					LOGDBG("Save to user bank: '%s' (bank %d)", sName.c_str(), nUserBankID);
 				}
 				else
 				{
 					LOGWARN("No user bank found — save cancelled");
 				}
 
-				// Return to Performance page now (will show Loading... until bank switch done)
+				// Return to Performance page
 				NavigateBack(1);
 			}
 			else if (nItemIndex == 3) // Cancel
@@ -1195,20 +1212,6 @@ void CUI4Row::OnParameterChanged()
 	m_nSelectedPerformanceBankID = m_pMiniDexed->GetPerformanceBank();
 	m_nSelectedPerformanceID = m_pMiniDexed->GetActualPerformanceID();
 	m_bBankIsLoading = false; // Loading finished
-
-	// Step 2 of deferred save: bank switch completed, now do the actual save
-	if (m_bPendingSave && IsUserBank())
-	{
-		m_bPendingSave = false;
-		m_pMiniDexed->SetNewPerformanceName(m_sPendingSaveName);
-		bool bOK = m_pMiniDexed->SavePerformanceNewFile();
-		LOGDBG("Deferred save: '%s' %s", m_sPendingSaveName.c_str(), bOK ? "OK" : "FAIL");
-		m_sPendingSaveName = "";
-		// Note: SavePerformanceNewFile() only sets a flag. The actual save
-		// happens in the engine's next Run() cycle via DoSavePerformanceNewFile().
-		// That save does NOT trigger OnParameterChanged, so we must NOT set
-		// m_bBankIsLoading here — it would never be cleared.
-	}
 
 	// Rebuild current page to reflect external changes
 	BuildCurrentPage();
