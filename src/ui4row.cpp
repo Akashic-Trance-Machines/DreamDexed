@@ -1027,7 +1027,13 @@ void CUI4Row::OnEncoderClick(unsigned nEncoder)
 	{
 		if (nCurrentMenu == MenuSaveSubmenu)
 		{
-			if (nItemIndex == 0) // Copy — pre-fill name from current performance
+			if (strcmp(row.pLabel, "Overwrite") == 0)
+			{
+				// Save current engine state to current file
+				m_pMiniDexed->SavePerformance(false);
+				NavigateBack(1);
+			}
+			else if (strcmp(row.pLabel, "Copy") == 0) // Copy — pre-fill name from current performance
 			{
 				int nPerfID = m_nSelectedPerformanceID;
 				std::string perfName = m_pMiniDexed->GetPerformanceName(nPerfID);
@@ -1043,7 +1049,7 @@ void CUI4Row::OnEncoderClick(unsigned nEncoder)
 				BuildCurrentPage();
 				m_bDirty = true;
 			}
-			else if (nItemIndex == 1) // New — blank name
+			else if (strcmp(row.pLabel, "New") == 0) // New — blank name
 			{
 				// Generate default name e.g. "Perf000001"
 				std::string defaultName = m_pMiniDexed->GetNewPerformanceDefaultName();
@@ -1058,7 +1064,7 @@ void CUI4Row::OnEncoderClick(unsigned nEncoder)
 				BuildCurrentPage();
 				m_bDirty = true;
 			}
-			else if (nItemIndex == 2) // Cancel
+			else if (strcmp(row.pLabel, "Cancel") == 0)
 			{
 				NavigateBack(1);
 			}
@@ -1506,31 +1512,48 @@ void CUI4Row::BuildStatusPage()
 void CUI4Row::BuildSaveSubmenuPage()
 {
 	m_CurrentPage.pTitle = "Save";
-	m_CurrentPage.nRowCount = 3;
+	
+	bool bIsUser = IsUserBank();
+	unsigned nRow = 0;
 
-	// Row 0: Copy — save to user bank using current performance name (editable)
+	// Row 0: Overwrite (only if already on a user bank)
+	if (bIsUser)
 	{
-		m_CurrentPage.Rows[0].Type = RowTypeAction;
-		m_CurrentPage.Rows[0].pLabel = "Copy";
-		m_CurrentPage.Rows[0].pValue = "";
-		m_CurrentPage.Rows[0].Action = ActionCommand;
+		m_CurrentPage.Rows[nRow].Type = RowTypeAction;
+		m_CurrentPage.Rows[nRow].pLabel = "Overwrite";
+		m_CurrentPage.Rows[nRow].pValue = "";
+		m_CurrentPage.Rows[nRow].Action = ActionCommand;
+		nRow++;
 	}
 
-	// Row 1: New — save to user bank with a new name
+	// Copy — save to user bank using current performance name (editable)
 	{
-		m_CurrentPage.Rows[1].Type = RowTypeAction;
-		m_CurrentPage.Rows[1].pLabel = "New";
-		m_CurrentPage.Rows[1].pValue = "";
-		m_CurrentPage.Rows[1].Action = ActionCommand;
+		m_CurrentPage.Rows[nRow].Type = RowTypeAction;
+		m_CurrentPage.Rows[nRow].pLabel = "Copy";
+		m_CurrentPage.Rows[nRow].pValue = "";
+		m_CurrentPage.Rows[nRow].Action = ActionCommand;
+		nRow++;
 	}
 
-	// Row 2: Cancel
+	// New — save to user bank with a new name
 	{
-		m_CurrentPage.Rows[2].Type = RowTypeAction;
-		m_CurrentPage.Rows[2].pLabel = "Cancel";
-		m_CurrentPage.Rows[2].pValue = "";
-		m_CurrentPage.Rows[2].Action = ActionCommand;
+		m_CurrentPage.Rows[nRow].Type = RowTypeAction;
+		m_CurrentPage.Rows[nRow].pLabel = "New";
+		m_CurrentPage.Rows[nRow].pValue = "";
+		m_CurrentPage.Rows[nRow].Action = ActionCommand;
+		nRow++;
 	}
+
+	// Cancel
+	{
+		m_CurrentPage.Rows[nRow].Type = RowTypeAction;
+		m_CurrentPage.Rows[nRow].pLabel = "Cancel";
+		m_CurrentPage.Rows[nRow].pValue = "";
+		m_CurrentPage.Rows[nRow].Action = ActionCommand;
+		nRow++;
+	}
+
+	m_CurrentPage.nRowCount = nRow;
 }
 
 void CUI4Row::BuildDeleteConfirmPage()
